@@ -45,9 +45,15 @@ EOF
 # row with a (signed) Steam shortcut id, and a prefix in Unifideck's folder.
 F3="$H/Games/Epic/Fallout3"
 F3ID=adeae8bbfc94427db57c7dfecce3f1d4
-mkdir -p "$F3/Data" "$H/.config/legendary" "$H/.local/share/unifideck/prefixes/$F3ID/pfx/drive_c"
-touch "$F3/Fallout3.exe" "$F3/Fallout3Launcher.exe"
-printf 'epic:%s=%s/Fallout3Launcher.exe\t%s\t-123456789\n' "$F3ID" "$F3" "$F3" > "$H/.local/share/unifideck/games.map"
+# Same layout as the real Epic copy: one full game per language, chosen by a
+# top-level Launcher.exe (seen on a Deck, 2026-10-19).
+mkdir -p "$H/.config/legendary" "$H/.local/share/unifideck/prefixes/$F3ID/pfx/drive_c"
+for L in English French German; do
+  mkdir -p "$F3/Fallout 3 GOTY $L/Data"
+  touch "$F3/Fallout 3 GOTY $L/Fallout3.exe" "$F3/Fallout 3 GOTY $L/Data/Fallout3.esm"
+done
+touch "$F3/Launcher.exe" "$F3/.unifideck_manifest.json"
+printf 'epic:%s=%s/Launcher.exe\t%s\t-123456789\n' "$F3ID" "$F3" "$F3" > "$H/.local/share/unifideck/games.map"
 cat > "$H/.config/legendary/installed.json" <<EOF
 {"$F3ID": {"app_name": "$F3ID", "title": "Fallout 3", "install_path": "$F3"}}
 EOF

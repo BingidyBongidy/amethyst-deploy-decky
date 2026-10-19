@@ -40,6 +40,8 @@ f3 = [d for d in det if "unifideck" in d["launchers"]]; print("unifideck:", f3)
 assert any(d["name"] == "Fallout 3" for d in f3), det
 r, e = call("configure_game", game="Fallout 3"); print("configure F3:", r, e)
 assert not e and r["source"] == "unifideck" and r["prefix"].endswith("adeae8bbfc94427db57c7dfecce3f1d4/pfx"), (r, e)
+assert r["path"].endswith("Fallout 3 GOTY English"), r["path"]
+assert call("game_folder_check", game="Fallout 3")[0]["data_exists"]
 f3g = next(x for x in call("list_games")[0] if x["name"] == "Fallout 3")
 assert f3g["configured"] and f3g["shortcut_appid"] == str(-123456789 & 0xFFFFFFFF), f3g
 print("configure:", call("configure_game", game=G))

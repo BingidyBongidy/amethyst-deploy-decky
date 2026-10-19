@@ -119,21 +119,36 @@ def _has_exe(folder: Path, exe_names: list[str]) -> bool:
 
 def _exe_root(root: Path, exe_names: list[str]) -> Path:
     """The game root is the folder holding the game's exe. Store installs
-    sometimes nest it one level down; fall back to *root* when unsure."""
+    sometimes nest it one level down, and the Epic Fallout 3 GOTY has a full
+    copy per language ("Fallout 3 GOTY English", "... French", ...) picked by
+    a top-level Launcher.exe; then take the language its launcher_settings.cfg
+    names, else English."""
     if not exe_names or _has_exe(root, exe_names):
         return root
     try:
-        subdirs = [d for d in root.iterdir() if d.is_dir()]
+        subdirs = sorted(d for d in root.iterdir() if d.is_dir())
     except OSError:
         return root
     hits = [d for d in subdirs if _has_exe(d, exe_names)]
-    return hits[0] if len(hits) == 1 else root
+    if len(hits) <= 1:
+        return hits[0] if hits else root
+    try:
+        settings = (root / "launcher_settings.cfg").read_text(errors="replace").lower()
+    except OSError:
+        settings = ""
+    for d in hits:
+        language = d.name.split()[-1].lower()
+        if d.name.lower() in settings or (language and language in settings):
+            return d
+    return next((d for d in hits if "english" in d.name.lower()), hits[0])
 
 
 def find(exe_names: list[str], app_names: list[str], rows: "list[Row] | None" = None,
-         legendary: "dict | None" = None):
+         legendary: "dict | None" = None, markers: "list[str] | None" = None):
     """(install root, Row, matched exe or None) for a game, or None. Pass
     *rows* / *legendary* when checking many games, to read the files once.
+    *markers* are extra relative paths that identify the game root, such as
+    "Data/Fallout3.esm", for installs whose exe isn't one Amethyst knows.
 
     When the handler declares store app names (Amethyst's heroic_app_names:
     Epic appNames and GOG product ids) only those match, like Amethyst's own
@@ -151,7 +166,7 @@ def find(exe_names: list[str], app_names: list[str], rows: "list[Row] | None" = 
                 if entry.get("install_path"):
                     root = Path(entry["install_path"])
             if root.is_dir():
-                return _exe_root(root, exe_names), row, None
+                return _exe_root(root, exe_names + list(markers or [])), row, None
         return None
     for row in rows:
         for exe in exe_names:

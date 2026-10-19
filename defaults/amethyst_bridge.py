@@ -188,7 +188,7 @@ class Bridge:
                     continue
                 launchers = list(index.game_launchers(g))
                 if uni_rows and unifideck.find(self._exe_names(g), self._heroic_app_names(g),
-                                               uni_rows, legendary):
+                                               uni_rows, legendary, self._root_markers(g)):
                     launchers.append("unifideck")
             except Exception as e:
                 self.log(f"detect {name}: {e}")
@@ -205,6 +205,11 @@ class Bridge:
         if not names:
             names = [getattr(g, "exe_name", None)] + list(getattr(g, "exe_name_alts", []) or [])
         return [n for n in names if n]
+
+    @staticmethod
+    def _root_markers(g) -> list[str]:
+        """Files that mark a game root besides its exe: the base game's plugins."""
+        return [f"Data/{p}" for p in getattr(g, "vanilla_plugins", []) or []]
 
     @staticmethod
     def _heroic_app_names(g) -> list[str]:
@@ -280,7 +285,7 @@ class Bridge:
             if info:
                 found = True
                 yield cand("bottles", *info)
-            hit = unifideck.find(exe_names, heroic)
+            hit = unifideck.find(exe_names, heroic, markers=self._root_markers(g))
             if hit:
                 root, row, exe = hit
                 found = True
