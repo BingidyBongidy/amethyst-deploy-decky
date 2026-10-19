@@ -61,10 +61,114 @@ async def _run(args, stdin_data: bytes | None = None, timeout: float = 120):
     return proc.returncode, out.decode(errors="replace"), err.decode(errors="replace")
 
 
+import json  # noqa: E402
+
+# Methods the frontend may call on the bridge, with a timeout for each.
+# LOOT downloads its masterlist and reads every plugin, so it gets longest.
+BRIDGE_METHODS = {
+    "list_games": 120, "detect_installed": 120, "configure_game": 120,
+    "create_profile": 30, "mods": 120, "set_mod_enabled": 120, "move_mod": 60,
+    "plugins": 180, "set_plugin_enabled": 180, "move_plugin": 180,
+    "loot_sort": 600, "recent_log": 10,
+}
+
+
+class BridgeClient:
+    """One long-lived amethyst_bridge.py inside Amethyst's Flatpak.
+
+    Starting Amethyst's Python and discovering ~100 games takes a few
+    seconds, so we keep the process and talk JSON lines to it. Requests are
+    serialised; if it dies or times out it's restarted on the next call.
+    """
+
+    def __init__(self):
+        self.proc: "asyncio.subprocess.Process | None" = None
+        self.lock = asyncio.Lock()
+        self.next_id = 0
+
+    async def _start(self):
+        script = Path(decky.DECKY_PLUGIN_DIR) / "amethyst_bridge.py"
+        self.proc = await asyncio.create_subprocess_exec(
+            "flatpak", "run", "--command=python3", FLATPAK_ID, str(script),
+            stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE, env=_user_env(),
+            limit=16 * 1024 * 1024)  # big mod lists make long JSON lines
+        asyncio.get_event_loop().create_task(self._drain_stderr(self.proc))
+        hello = await asyncio.wait_for(self.proc.stdout.readline(), 120)
+        if not hello:
+            await self.stop()
+            raise RuntimeError("Amethyst's helper exited on startup - check the Decky log.")
+        decky.logger.info("bridge ready: %s", hello.decode().strip())
+
+    @staticmethod
+    async def _drain_stderr(proc):
+        # Amethyst logs a lot; keep the pipe empty and the useful bits in our log.
+        async for raw in proc.stderr:
+            line = raw.decode(errors="replace").rstrip()
+            if line and not line.startswith("[startup]"):
+                decky.logger.debug("bridge: %s", line)
+
+    async def stop(self):
+        proc, self.proc = self.proc, None
+        if proc and proc.returncode is None:
+            try:
+                proc.stdin.close()
+                await asyncio.wait_for(proc.wait(), 5)
+            except Exception:
+                proc.kill()
+                await proc.wait()
+
+    async def call(self, method: str, params: dict, timeout: float):
+        async with self.lock:
+            if self.proc is None or self.proc.returncode is not None:
+                await self._start()
+            self.next_id += 1
+            rid = self.next_id
+            self.proc.stdin.write((json.dumps({"id": rid, "method": method,
+                                               "params": params}) + "\n").encode())
+            await self.proc.stdin.drain()
+            try:
+                while True:
+                    line = await asyncio.wait_for(self.proc.stdout.readline(), timeout)
+                    if not line:
+                        raise RuntimeError("Amethyst's helper stopped unexpectedly.")
+                    resp = json.loads(line)
+                    if resp.get("id") == rid:
+                        return resp
+            except (asyncio.TimeoutError, RuntimeError, ValueError):
+                # Out of sync or dead: throw it away so the next call starts clean.
+                await self.stop()
+                raise
+
+
 class Plugin:
     job: "asyncio.Task | None" = None
     job_log: list = []
     job_state: dict = {}
+    bridge: "BridgeClient | None" = None
+
+    # ---------- full controller UI (bridge) ----------
+
+    async def call(self, method: str, params: dict | None = None) -> dict:
+        """Frontend entry point: {ok, result} or {ok: False, error}."""
+        if method not in BRIDGE_METHODS:
+            return {"ok": False, "error": f"Unknown action {method}"}
+        if self.job and not self.job.done():
+            return {"ok": False, "error": "Wait for the current deploy/install to finish."}
+        if not await self._flatpak_installed():
+            return {"ok": False, "error": "The full UI needs Amethyst's Flatpak. Install it from the plugin menu."}
+        if self.bridge is None:
+            self.bridge = BridgeClient()
+        try:
+            resp = await self.bridge.call(method, params or {}, BRIDGE_METHODS[method])
+        except asyncio.TimeoutError:
+            return {"ok": False, "error": "Amethyst took too long to answer. Try again."}
+        except Exception as e:
+            decky.logger.exception("bridge call %s failed", method)
+            return {"ok": False, "error": str(e)}
+        if "error" in resp:
+            return {"ok": False, "error": resp["error"]}
+        return {"ok": True, "result": resp.get("result")}
 
     # ---------- install detection ----------
 
@@ -164,6 +268,10 @@ class Plugin:
             cmds = [[*inst["cli"], action, game] + ([profile] if action == "deploy" else [])]
         else:
             return {"ok": False, "error": f"unknown action {action}"}
+        if self.bridge is not None:
+            # Deploy/restore/update run as separate processes on the same files;
+            # don't leave the helper holding them open. It restarts on demand.
+            await self.bridge.stop()
         self.job_log = []
         self.job_state = {"action": action, "game": game, "profile": profile,
                           "running": True, "ok": None}
@@ -239,6 +347,8 @@ class Plugin:
         if self.job and not self.job.done():
             # Don't kill a deploy halfway through - let it finish on its own.
             decky.logger.info("unloading with a job still running")
+        if self.bridge is not None:
+            await self.bridge.stop()
 
 
 _ROW = re.compile(r"^(?P<name>.+?)\s+(?P<gid>\S+)\s+(?P<cfg>yes|no)\s*$")
