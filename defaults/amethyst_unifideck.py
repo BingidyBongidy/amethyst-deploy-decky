@@ -117,11 +117,31 @@ def _has_exe(folder: Path, exe_names: list[str]) -> bool:
     return False
 
 
-def _exe_root(root: Path, exe_names: list[str]) -> Path:
-    """The game root is the folder holding the game's exe. Store installs
-    sometimes nest it one level down, and the Epic Fallout 3 GOTY has a full
-    copy per language ("Fallout 3 GOTY English", "... French", ...) picked by
-    a top-level Launcher.exe; then take the language its launcher_settings.cfg
+# Language spellings seen in Legendary install tags and folder names (same
+# idea as Unifideck's utils/lang_normalize.py).
+_LANGUAGES = (("en", "eng", "english"), ("fr", "fra", "french", "francais"),
+              ("de", "deu", "ger", "german", "deutsch"), ("es", "esp", "spa", "spanish"),
+              ("it", "ita", "italian", "italiano"), ("pl", "pol", "polish"),
+              ("ru", "rus", "russian"), ("pt", "por", "portuguese", "brazilian"),
+              ("ja", "jpn", "japanese"), ("zh", "chi", "chinese"), ("ko", "kor", "korean"))
+
+
+def _language(text: str) -> "str | None":
+    """ISO 639-1 code for a language word or tag ("French", "fr-FR", "deu")."""
+    for word in text.lower().replace("_", "-").replace("-", " ").split():
+        for group in _LANGUAGES:
+            if word in group:
+                return group[0]
+    return None
+
+
+def _exe_root(root: Path, exe_names: list[str], languages: "list[str] | None" = None) -> Path:
+    """The game root is the folder holding the game's exe (or other marker).
+    Store installs sometimes nest it one level down. Epic's "Selective
+    Downloads" titles (Fallout 3 GOTY, Fallout: New Vegas, ...) hold one full
+    copy per language ("Fallout 3 GOTY English", "... French", ...) under a
+    top-level Launcher.exe; then take the language Legendary installed
+    (*languages*, from its install tags), else the one launcher_settings.cfg
     names, else English."""
     if not exe_names or _has_exe(root, exe_names):
         return root
@@ -132,15 +152,18 @@ def _exe_root(root: Path, exe_names: list[str]) -> Path:
     hits = [d for d in subdirs if _has_exe(d, exe_names)]
     if len(hits) <= 1:
         return hits[0] if hits else root
+    by_lang = {_language(d.name.split()[-1]): d for d in hits}
+    for code in languages or []:
+        if code in by_lang:
+            return by_lang[code]
     try:
         settings = (root / "launcher_settings.cfg").read_text(errors="replace").lower()
     except OSError:
         settings = ""
     for d in hits:
-        language = d.name.split()[-1].lower()
-        if d.name.lower() in settings or (language and language in settings):
+        if d.name.lower() in settings or d.name.split()[-1].lower() in settings:
             return d
-    return next((d for d in hits if "english" in d.name.lower()), hits[0])
+    return by_lang.get("en", hits[0])
 
 
 def find(exe_names: list[str], app_names: list[str], rows: "list[Row] | None" = None,
@@ -159,14 +182,16 @@ def find(exe_names: list[str], app_names: list[str], rows: "list[Row] | None" = 
         for row in rows:
             if row.game_id.lower() not in names:
                 continue
-            root = row.work_dir
+            root, languages = row.work_dir, []
             if row.store == "epic":
                 legendary = legendary_installed() if legendary is None else legendary
                 entry = legendary.get(row.game_id) or {}
                 if entry.get("install_path"):
                     root = Path(entry["install_path"])
+                # Selective Downloads: the language pack Legendary installed.
+                languages = [c for c in (_language(str(t)) for t in entry.get("install_tags") or []) if c]
             if root.is_dir():
-                return _exe_root(root, exe_names + list(markers or [])), row, None
+                return _exe_root(root, exe_names + list(markers or []), languages), row, None
         return None
     for row in rows:
         for exe in exe_names:
