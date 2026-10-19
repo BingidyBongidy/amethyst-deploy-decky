@@ -85,6 +85,22 @@ Original spec:
 - Keep the UI usable while a deploy job runs; disable mutating actions.
 
 ### 3. Phase 2: browse, search and install mods (no Desktop Mode, ever)
+**Built 2026-10-19, not yet run on a device.** Backend: `defaults/amethyst_tasks.py`
+(background tasks, FOMOD/BAIN/exists/deps choices), `defaults/amethyst_sources.py`
+(Nexus API-key login via phone QR, browse/search, Premium download; Thunderstore),
+tested by `tests/install_smoke.py` (incl. a live Thunderstore install). Frontend:
+`src/install/` (task tray, prompts, FOMOD wizard, Downloads tab) and `src/getmods/`
+(Get mods tab). Device checks:
+- [ ] Downloads tab lists `~/Downloads`; A installs; a FOMOD archive opens the
+      wizard, D-pad + A pick options, Install works; B asks "Cancel install?".
+- [ ] Get mods → Nexus: the QR opens the login page on a phone on the same Wi-Fi
+      (if not, the Deck's firewall/network blocks it - check the Decky log for the
+      URL); pasting the key logs in; browse/search/details work.
+- [ ] Nexus Premium file install, and the free-account message.
+- [ ] Thunderstore game (e.g. Valheim): search, Install latest, dependency prompt.
+- [ ] Focus after "Load more", after Back from details, and after FOMOD Next.
+- [ ] Unifideck game: Deploy & Play launches the Unifideck shortcut.
+
 Decided 2026-10-19 with Brad: everything happens in the plugin, with **zero
 mouse**: gamepad buttons and D-pad only, never a trackpad or stick-as-cursor
 (see CLAUDE.md). The target user has a **free** Nexus account. Free accounts can't download through the API
