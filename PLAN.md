@@ -39,7 +39,9 @@ Mode and no mouse-style UI.
 ## Next steps
 
 ### 1. Verify on the device first (highest risk)
-Before building more UI, install the `main` zip on the handheld and confirm:
+The build agent has no access to the handheld; Brad installs builds and reports
+back (Decky log + what he saw). Before building more UI, produce a zip and ask
+Brad to confirm:
 - [ ] The Decky backend can run `flatpak` (the `LD_LIBRARY_PATH` stripping and
       the session bus env in `_user_env()`).
 - [ ] **Install Amethyst** works from Gaming Mode.

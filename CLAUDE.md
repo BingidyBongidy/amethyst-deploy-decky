@@ -25,6 +25,7 @@ state, next steps and how to test.
 - Licence: GPL-3.0-or-later (the bridge imports Amethyst's GPL code).
 
 ## Debugging on the device
+You can't reach the device. Ship a zip and ask Brad for these when something fails:
 - Decky logs: `~/homebrew/logs/Amethyst Deploy/`
 - Frontend console: enable CEF remote debugging in Decky's developer settings,
   then open `http://<device-ip>:8081` from a desktop browser.
