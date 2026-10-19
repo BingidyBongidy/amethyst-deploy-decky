@@ -41,6 +41,17 @@ cat > "$HR/gog_store/installed.json" <<EOF
 {"installed": [{"appName": "1454587428", "platform": "windows",
   "install_path": "$NV", "executable": "FalloutNV.exe"}]}
 EOF
+# Fallout 3 from Epic through Unifideck: its own Legendary config, a games.map
+# row with a (signed) Steam shortcut id, and a prefix in Unifideck's folder.
+F3="$H/Games/Epic/Fallout3"
+F3ID=adeae8bbfc94427db57c7dfecce3f1d4
+mkdir -p "$F3/Data" "$H/.config/legendary" "$H/.local/share/unifideck/prefixes/$F3ID/pfx/drive_c"
+touch "$F3/Fallout3.exe" "$F3/Fallout3Launcher.exe"
+printf 'epic:%s=%s/Fallout3Launcher.exe\t%s\t-123456789\n' "$F3ID" "$F3" "$F3" > "$H/.local/share/unifideck/games.map"
+cat > "$H/.config/legendary/installed.json" <<EOF
+{"$F3ID": {"app_name": "$F3ID", "title": "Fallout 3", "install_path": "$F3"}}
+EOF
+
 # Valheim in the same Steam library: a Thunderstore game for the live
 # download test.
 VH="$ST/common/Valheim"

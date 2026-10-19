@@ -32,6 +32,12 @@ assert not r["needs_first_launch"], r
 r, e = call("list_games"); nv = next(x for x in r if x["name"] == "Fallout New Vegas"); print("fnv after:", nv["configured"], nv["profiles"])
 assert nv["configured"]
 assert all(d["name"] != "Fallout New Vegas" for d in call("detect_installed")[0])
+f3 = [d for d in det if "unifideck" in d["launchers"]]; print("unifideck:", f3)
+assert any(d["name"] == "Fallout 3" for d in f3), det
+r, e = call("configure_game", game="Fallout 3"); print("configure F3:", r, e)
+assert not e and r["source"] == "unifideck" and r["prefix"].endswith("adeae8bbfc94427db57c7dfecce3f1d4/pfx"), (r, e)
+f3g = next(x for x in call("list_games")[0] if x["name"] == "Fallout 3")
+assert f3g["configured"] and f3g["shortcut_appid"] == str(-123456789 & 0xFFFFFFFF), f3g
 print("configure:", call("configure_game", game=G))
 r, e = call("list_games"); sk = next(x for x in r if x["name"] == G); print("skyrim after:", sk["configured"], sk["profiles"])
 # install two mods by hand into staging, like Amethyst would

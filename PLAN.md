@@ -120,8 +120,11 @@ Build order (each step ships a zip for Brad to test):
    `Thunderstore/*` has no account limits, so these can install in one press.
 
 ### 3a. More install sources
-- **Unifideck** (Decky plugin for Epic/GOG/Amazon): Amethyst can't see its
-  installs. Add to the bridge's detect/configure: install path from
+- **Unifideck** (Decky plugin for Epic/GOG/Amazon): **done in the bridge**
+  (`defaults/amethyst_unifideck.py`, launcher name `unifideck`; tested with a
+  fake Epic Fallout 3). `list_games` now also returns `shortcut_appid`: when
+  set, Deploy & Play should launch that non-Steam shortcut, not `steam_id`
+  (frontend still to do). Amethyst can't see these installs itself. How: install path from
   `~/.config/legendary/installed.json` matched on Amethyst's
   `heroic_app_names`, Steam shortcut id from
   `~/.local/share/unifideck/games.map` (`epic:<appName> = exe\twork_dir\tappid`),

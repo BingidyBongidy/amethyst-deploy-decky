@@ -37,6 +37,7 @@ from amethyst_tasks import (  # noqa: E402
     Task, TaskError, TaskManager, fomod_image, fomod_toggle, fomod_view,
     install_archive_flow)
 from amethyst_sources import Nexus, Thunderstore, nexus_domain, ts_community  # noqa: E402
+import amethyst_unifideck as unifideck  # noqa: E402
 
 PROTOCOL = 2
 
@@ -125,7 +126,7 @@ class Bridge:
                 "active_profile": "",
                 "has_plugins": bool(getattr(g, "plugin_extensions", None)),
                 "loot": bool(getattr(g, "loot_sort_enabled", False)),
-                "nexus_domain": "", "ts_community": ""}
+                "nexus_domain": "", "ts_community": "", "shortcut_appid": ""}
         try:
             info["nexus_domain"] = nexus_domain(g)
             info["ts_community"] = ts_community(g)
@@ -144,6 +145,9 @@ class Bridge:
                 info["profiles"] = self._profiles(g)
                 info["deploy_active"] = bool(g.get_deploy_active())
                 info["deployed_profile"] = g.get_last_deployed_profile() or ""
+                # Non-Steam shortcut (incl. Unifideck): launch through it, not the store app.
+                info["shortcut_appid"] = str(g.get_shortcut_appid() or "") if hasattr(
+                    g, "get_shortcut_appid") else ""
                 info["active_profile"] = g.get_last_active_profile() or ""
             except Exception as e:
                 self.log(f"{name}: {e}")
@@ -163,7 +167,8 @@ class Bridge:
 
     def detect_installed(self):
         """Unconfigured games installed through any launcher Amethyst knows
-        (Steam, Heroic, Lutris, Faugus, Bottles, non-Steam shortcuts, standalone).
+        (Steam, Heroic, Lutris, Faugus, Bottles, non-Steam shortcuts, standalone),
+        plus Unifideck, which Amethyst doesn't know (see amethyst_unifideck.py).
 
         Mirror of AddGameView._scan_installed_games (gui_qt/add_game_view.py):
         one InstalledIndex, then game_launchers() per game."""
@@ -171,12 +176,15 @@ class Bridge:
         if not self.games:
             self.games = discover_games()
         index = InstalledIndex(log=self.log)
+        uni_rows = unifideck.load_rows()
         found = []
         for name, g in sorted(self.games.items()):
             try:
                 if g.is_configured():
                     continue
-                launchers = index.game_launchers(g)
+                launchers = list(index.game_launchers(g))
+                if uni_rows and unifideck.find(self._exe_names(g), self._heroic_app_names(g), uni_rows):
+                    launchers.append("unifideck")
             except Exception as e:
                 self.log(f"detect {name}: {e}")
                 continue
@@ -260,6 +268,12 @@ class Bridge:
             info = find_bottles_game_info_by_exes(exe_names)
             if info:
                 add("bottles", *info)
+            # Not in the GUI: Unifideck installs (a shortcut Amethyst can't match).
+            hit = unifideck.find(exe_names, self._heroic_app_names(g))
+            if hit:
+                root, row = hit
+                add("unifideck", root, unifideck.prefix_for(row), row.app_id,
+                    next((e for e in exe_names if unifideck._root_for_exe(row, e)), None))
             from Utils.launchers.steam_shortcuts import find_shortcut_game_info_by_exe
             for exe in exe_names:
                 info = find_shortcut_game_info_by_exe(exe)
@@ -303,6 +317,9 @@ class Bridge:
         through the launcher the install came from (any launcher if None)."""
         exe_names = [e for e in [getattr(g, "exe_name", None)]
                      + list(getattr(g, "exe_name_alts", []) or []) if e]
+        if source == "unifideck":
+            hit = unifideck.find(self._exe_names(g), self._heroic_app_names(g))
+            return unifideck.prefix_for(hit[1]) if hit else None
         try:
             from Utils.launchers.steam import find_prefix
             from Utils.launchers.heroic import find_heroic_prefix
@@ -358,8 +375,8 @@ class Bridge:
         else:
             cands = self._install_candidates(g)
             if not cands:
-                raise BridgeError(f"Couldn't find {g.name} in Steam, Heroic, Lutris, Faugus, "
-                                  "Bottles or your non-Steam shortcuts.")
+                raise BridgeError(f"Couldn't find {g.name} in Steam, Heroic, Unifideck, Lutris, "
+                                  "Faugus, Bottles or your non-Steam shortcuts.")
             c = cands[0]  # the GUI auto-applies the first candidate
         target = c["path"]
         if not target.is_dir():
@@ -379,7 +396,7 @@ class Bridge:
             "get_appimage_path", "set_appimage_path", "detect_appimage", "scan_appimage"))
         has_prefix_src = not uses_appimage and hasattr(g, "set_prefix_path") and bool(
             getattr(g, "steam_id", None) or self._heroic_app_names(g)
-            or source in ("heroic", "lutris", "faugus", "bottles", "shortcut"))
+            or source in ("heroic", "lutris", "faugus", "bottles", "shortcut", "unifideck"))
         prefix = None
         if has_prefix_src and c["prefix_mode"] != "native":
             prefix = c["prefix"] or self._find_prefix(
@@ -391,7 +408,9 @@ class Bridge:
             keys = {"heroic": "heroic_app_name", "lutris": "lutris_slug",
                     "faugus": "faugus_gameid", "bottles": "bottles_program",
                     "shortcut": "shortcut_appid"}
-            g.set_launcher_ids(**{k: (str(c["id"] or "") if source == s else "")
+            # A Unifideck install is a non-Steam shortcut as far as Amethyst is concerned.
+            as_source = "shortcut" if source == "unifideck" else source
+            g.set_launcher_ids(**{k: (str(c["id"] or "") if as_source == s else "")
                                   for s, k in keys.items()})
 
         from Utils.profiles.structure import create_profile_structure
