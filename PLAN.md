@@ -112,6 +112,9 @@ tested by `tests/install_smoke.py` (incl. a live Thunderstore install). Frontend
 - [ ] Thunderstore game (e.g. Valheim): search, Install latest, dependency prompt.
 - [ ] Focus after "Load more", after Back from details, and after FOMOD Next.
 - [ ] Unifideck game: Deploy & Play launches the Unifideck shortcut.
+- [ ] Setup: "Choose folder…" opens the picker (Home, SD card, Steam libraries);
+      A opens, X picks, B goes up; folders holding the game show a tick; a wrong
+      folder asks "Use it anyway?"; a failed setup stays on screen with Choose folder.
 
 Decided 2026-10-19 with Brad: everything happens in the plugin, with **zero
 mouse**: gamepad buttons and D-pad only, never a trackpad or stick-as-cursor

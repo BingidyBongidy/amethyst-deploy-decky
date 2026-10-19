@@ -68,7 +68,7 @@ import json  # noqa: E402
 # Installs and downloads run as bridge tasks and answer at once.
 BRIDGE_METHODS = {
     "list_games": 120, "detect_installed": 120, "configure_game": 120,
-    "create_profile": 30, "mods": 120, "set_mod_enabled": 120, "move_mod": 60, "remove_mod": 300, "game_folder_check": 30,
+    "create_profile": 30, "mods": 120, "set_mod_enabled": 120, "move_mod": 60, "remove_mod": 300, "game_folder_check": 30, "browse_folders": 30,
     "plugins": 180, "set_plugin_enabled": 180, "move_plugin": 180,
     "loot_sort": 600, "recent_log": 10,
     "tasks": 10, "task_answer": 10, "task_cancel": 10,

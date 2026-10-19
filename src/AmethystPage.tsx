@@ -14,6 +14,7 @@ import { Check, Loading, Note, Styles, useRows } from "./ui";
 import { TaskTray } from "./install/TaskTray";
 import { DownloadsTab } from "./install/DownloadsTab";
 import { GetModsTab } from "./getmods/GetModsTab";
+import { chooseGameFolder } from "./setup/FolderPicker";
 import {
   BridgeGame, Mod, PluginRow, bridge, errText, launchId, runApp, selection,
   startGameJob, toast, useBridgeEvent, useJob,
@@ -197,7 +198,11 @@ export const askNewProfile = (game: string, onCreated: (name: string) => void) =
   showModal(<NewProfileModal game={game} onCreated={onCreated} />);
 
 type Detected = { name: string; launchers: string[] };
-type Configured = { configured: boolean; path: string; prefix: string; source: string; needs_first_launch: boolean };
+type Configured = {
+  configured: boolean; path: string; prefix: string; source: string; needs_first_launch: boolean;
+  /** A folder chosen by hand that doesn't look like the game: ask before using it (force). */
+  needs_confirm?: boolean; message?: string;
+};
 
 const LAUNCHERS: Record<string, string> = {
   steam: "Steam", heroic: "Heroic", lutris: "Lutris", faugus: "Faugus", bottles: "Bottles",
@@ -213,21 +218,34 @@ function SetupTab({ games, current, locked, reload, onConfigured, onProfileCreat
   const ready = games.filter((g) => g.configured);
   const [working, setWorking] = useState("");
   const [firstLaunch, setFirstLaunch] = useState<{ name: string; source: string }[]>([]);
+  // The last setup that failed, kept on screen with a way to pick the folder by hand.
+  const [failed, setFailed] = useState<{ game: string; message: string } | null>(null);
+  const unconfigured = games.filter((g) => !g.configured);
+  const [byHand, setByHand] = useState<string | undefined>(undefined);
 
-  const configure = async (d: Detected) => {
-    setWorking(d.name);
+  /** Set a game up: auto-detected (no path) or from a folder chosen by hand. */
+  const configure = async (name: string, path?: string, force = false) => {
+    setWorking(name);
+    setFailed(null);
     try {
-      const r = await bridge<Configured>("configure_game", { game: d.name });
-      setRows((rs) => (rs ?? []).filter((x) => x.name !== d.name));
-      if (r.needs_first_launch) setFirstLaunch((f) => [...f, { name: d.name, source: r.source }]);
-      toast(`${d.name} is set up (${launcherName(r.source)}): ${r.path}`);
-      onConfigured(d.name);
+      const r = await bridge<Configured>("configure_game", { game: name, ...(path ? { path, force } : {}) });
+      if (r.needs_confirm) {
+        showModal(<ConfirmModal strTitle="Use this folder anyway?" strDescription={r.message}
+          strOKButtonText="Use it anyway" onOK={() => configure(name, path, true)} />);
+        return;
+      }
+      setRows((rs) => (rs ?? []).filter((x) => x.name !== name));
+      if (r.needs_first_launch) setFirstLaunch((f) => [...f, { name, source: r.source }]);
+      toast(`${name} is set up (${launcherName(r.source)}): ${r.path}`);
+      onConfigured(name);
     } catch (e) {
-      toast(errText(e));
+      setFailed({ game: name, message: errText(e) });
     } finally {
       setWorking("");
     }
   };
+  const pickFolder = (name: string) => chooseGameFolder(name, (path) => configure(name, path));
+  const buttonStyle = { width: "auto", alignSelf: "flex-start", minWidth: 240 } as const;
 
   return (
     <Focusable flow-children="vertical" style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -244,11 +262,25 @@ function SetupTab({ games, current, locked, reload, onConfigured, onProfileCreat
               <ConfirmModal strTitle={`Set up ${current.name} again?`}
                 strDescription="Finds the game's folder and prefix again, the same way as the first setup. Your mods and profiles stay."
                 strOKButtonText="Set up again"
-                onOK={() => configure({ name: current.name, launchers: [] })} />)}>
+                onOK={() => configure(current.name)} />)}>
             Set up {current.name} again
+          </DialogButton>
+          <DialogButton style={buttonStyle} disabled={locked || !!working || current.deploy_active}
+            onClick={() => pickFolder(current.name)}>
+            Choose {current.name}'s folder…
           </DialogButton>
           {current.deploy_active && <div className="amd-sub">Restore vanilla first to set it up again.</div>}
         </>
+      )}
+
+      {failed && (
+        <Focusable className="amd-bar" flow-children="horizontal" style={{ alignItems: "flex-start" }}>
+          <span className="amd-err" style={{ flex: 1, whiteSpace: "normal", fontSize: 13 }}>
+            <FaExclamationTriangle /> Couldn't set up {failed.game}: {failed.message}
+          </span>
+          <DialogButton style={{ width: "auto", minWidth: 180 }} disabled={locked || !!working}
+            onClick={() => pickFolder(failed.game)}>Choose folder…</DialogButton>
+        </Focusable>
       )}
 
       {firstLaunch.map(({ name, source }) => {
@@ -273,9 +305,9 @@ function SetupTab({ games, current, locked, reload, onConfigured, onProfileCreat
             {ready.length
               ? "No other supported games found."
               : "No supported games found."}{" "}
-            Amethyst looks in Steam, Heroic, Lutris, Faugus, Bottles and your non-Steam shortcuts, and only
-            for games it has mod support for (Bethesda games, Cyberpunk 2077, Stardew Valley, Baldur's Gate 3,
-            Balatro and others). Install one, then come back to this tab.
+            It looks in Steam, Heroic, Unifideck, Lutris, Faugus, Bottles and your non-Steam shortcuts, for
+            games Amethyst supports (Bethesda games, Cyberpunk 2077, Stardew Valley, Baldur's Gate 3, Balatro and
+            others). If a game you have isn't listed, set it up by hand below.
           </Note>
         ) :
           rows.map((d) => (
@@ -285,11 +317,27 @@ function SetupTab({ games, current, locked, reload, onConfigured, onProfileCreat
                 <div className="amd-tag">{d.launchers.map(launcherName).join(" · ")}</div>
               </div>
               <DialogButton style={{ width: "auto", minWidth: 140 }} disabled={locked || !!working}
-                onClick={() => configure(d)}>
+                onClick={() => configure(d.name)}>
                 {working === d.name ? "Setting up…" : "Set up"}
+              </DialogButton>
+              <DialogButton style={{ width: "auto", minWidth: 160 }} disabled={locked || !!working}
+                onClick={() => pickFolder(d.name)}>
+                Choose folder…
               </DialogButton>
             </Focusable>
           ))}
+
+      <div className="amd-status" style={{ marginTop: 12 }}>Set up a game by hand (if it wasn't found above)</div>
+      <Focusable className="amd-bar" flow-children="horizontal">
+        <div style={{ minWidth: 280 }}>
+          <Dropdown rgOptions={unconfigured.map((g) => ({ data: g.name, label: g.name }))}
+            selectedOption={byHand} strDefaultLabel="Pick a game" onChange={(o) => setByHand(o.data)} />
+        </div>
+        <DialogButton style={{ width: "auto", minWidth: 180 }} disabled={locked || !!working || !byHand}
+          onClick={() => byHand && pickFolder(byHand)}>
+          Choose its folder…
+        </DialogButton>
+      </Focusable>
     </Focusable>
   );
 }

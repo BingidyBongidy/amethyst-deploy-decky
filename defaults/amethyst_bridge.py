@@ -38,6 +38,7 @@ from amethyst_tasks import (  # noqa: E402
     install_archive_flow)
 from amethyst_sources import Nexus, Thunderstore, nexus_domain, ts_community  # noqa: E402
 import amethyst_unifideck as unifideck  # noqa: E402
+import amethyst_gameroot as gameroot  # noqa: E402
 
 PROTOCOL = 2
 
@@ -366,10 +367,22 @@ class Bridge:
             self.log(f"prefix lookup failed: {e}")
         return None
 
-    def configure_game(self, game: str, path: str = ""):
+    def _game_markers(self, g) -> list[str]:
+        """What a real game folder holds: the handler's exes, plus the base
+        game's plugins for Bethesda games (see amethyst_gameroot)."""
+        return self._exe_names(g) + self._root_markers(g)
+
+    def configure_game(self, game: str, path: str = "", force: bool = False):
         """Same steps as Amethyst's Configure Game dialog with its auto-detect
         result applied (ConfigureGameView._apply_install_choice + _on_save):
-        game path, Proton prefix, launcher ids, then the profile structure."""
+        game path, Proton prefix, launcher ids, then the profile structure.
+
+        Not in the GUI: the folder is checked first. A launcher's folder that
+        doesn't hold the game is searched up to two levels down (stores nest
+        games, Epic splits some by language); if the game still isn't there it
+        fails with a clear message. A folder chosen by hand (*path*) that
+        doesn't look like the game returns {"needs_confirm": true, "message"}
+        unless *force*."""
         g = self._game(game)
         if path:
             c = {"source": "manual", "path": Path(path), "prefix": None,
@@ -378,10 +391,26 @@ class Bridge:
             c = next(self._install_candidates(g), None)
             if c is None:
                 raise BridgeError(f"Couldn't find {g.name} in Steam, Heroic, Unifideck, Lutris, "
-                                  "Faugus, Bottles or your non-Steam shortcuts.")
+                                  "Faugus, Bottles or your non-Steam shortcuts. "
+                                  "Choose its folder by hand instead.")
         target = c["path"]
         if not target.is_dir():
             raise BridgeError(f"Game folder not found: {target}")
+        markers = self._game_markers(g)
+        resolved, found = gameroot.resolve(target, markers)
+        if not found:
+            wanted = ", ".join(markers[:4])
+            if c["source"] != "manual":
+                raise BridgeError(f"{g.name} was found through {c['source']} at {target}, but its "
+                                  f"files ({wanted}) aren't in that folder or the ones below it. "
+                                  "Choose the game folder by hand.")
+            if not force:
+                return {"configured": False, "needs_confirm": True, "path": str(target),
+                        "message": f"{target} doesn't look like {g.name}'s folder: "
+                                   f"none of {wanted} is in it or the folders below it."}
+        elif resolved != target:
+            self.log(f"configure {g.name}: game files are in {resolved}, not {target}")
+            target = resolved
         try:
             if g.is_configured() and g.get_deploy_active():
                 raise BridgeError("Restore the game before changing where it's installed.")
@@ -420,6 +449,50 @@ class Bridge:
                 "prefix": str(prefix) if prefix else "", "source": source,
                 # Proton games need the prefix; the launcher only creates it on first launch.
                 "needs_first_launch": has_prefix_src and c["prefix_mode"] != "native" and prefix is None}
+
+    @unlocked
+    def browse_folders(self, path: str = "", game: str = ""):
+        """For the Setup tab's folder picker. No *path*: starting places (home,
+        SD cards and USB drives, Steam libraries, ~/Games). Otherwise the
+        folder's subfolders. With *game*, each folder says whether it looks
+        like that game's root (has its exe or base-game files)."""
+        markers = []
+        if game:
+            try:
+                markers = self._game_markers(self._game(game))
+            except Exception:
+                markers = []
+
+        def entry(name, folder: Path):
+            return {"name": name, "path": str(folder),
+                    "looks_like_game": bool(markers) and gameroot.has_marker(folder, markers)}
+
+        if not path:
+            home = Path.home()
+            places = [entry("Home", home)]
+            for base in (Path("/run/media"), Path("/media"), Path("/mnt")):
+                # SteamOS mounts SD cards at /run/media/<user>/<label> or /run/media/<label>.
+                for d in gameroot.subdirs(base):
+                    inner = [x for x in gameroot.subdirs(d) if x.name != "lost+found"]
+                    for media in (inner if d.name == home.name and inner else [d]):
+                        places.append(entry(f"Drive: {media.name}", media))
+            try:
+                from Utils.launchers.steam import find_steam_libraries
+                for common in find_steam_libraries():
+                    places.append(entry(f"Steam library: {common}", Path(common)))
+            except Exception as e:
+                self.log(f"browse: steam libraries: {e}")
+            for extra in (home / "Games",):
+                if extra.is_dir():
+                    places.append(entry(f"{extra.name} ({extra})", extra))
+            return {"path": "", "parent": "", "looks_like_game": False,
+                    "folders": [p for p in places if Path(p["path"]).is_dir()]}
+        folder = Path(path)
+        if not folder.is_dir():
+            raise BridgeError(f"Folder not found: {folder}")
+        return {"path": str(folder), "parent": str(folder.parent) if folder.parent != folder else "",
+                "looks_like_game": bool(markers) and gameroot.has_marker(folder, markers),
+                "folders": [entry(d.name, d) for d in gameroot.subdirs(folder)]}
 
     def create_profile(self, game: str, name: str):
         g = self._configured(game)

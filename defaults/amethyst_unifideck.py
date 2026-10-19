@@ -23,6 +23,8 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+import amethyst_gameroot as gameroot
+
 
 def _xdg(var: str, default: Path) -> Path:
     """The host's XDG dir. Inside Amethyst's Flatpak (where this runs) the XDG_*
@@ -101,71 +103,6 @@ def _root_for_exe(row: Row, exe_name: str) -> "Path | None":
     return None
 
 
-def _has_exe(folder: Path, exe_names: list[str]) -> bool:
-    """True if *folder* holds any of the handler's exes (case-insensitive)."""
-    for exe in exe_names:
-        cur = folder
-        for part in [p for p in exe.replace("\\", "/").split("/") if p]:
-            try:
-                cur = next((c for c in cur.iterdir() if c.name.lower() == part.lower()), None)
-            except OSError:
-                cur = None
-            if cur is None:
-                break
-        if cur is not None and cur.is_file():
-            return True
-    return False
-
-
-# Language spellings seen in Legendary install tags and folder names (same
-# idea as Unifideck's utils/lang_normalize.py).
-_LANGUAGES = (("en", "eng", "english"), ("fr", "fra", "french", "francais"),
-              ("de", "deu", "ger", "german", "deutsch"), ("es", "esp", "spa", "spanish"),
-              ("it", "ita", "italian", "italiano"), ("pl", "pol", "polish"),
-              ("ru", "rus", "russian"), ("pt", "por", "portuguese", "brazilian"),
-              ("ja", "jpn", "japanese"), ("zh", "chi", "chinese"), ("ko", "kor", "korean"))
-
-
-def _language(text: str) -> "str | None":
-    """ISO 639-1 code for a language word or tag ("French", "fr-FR", "deu")."""
-    for word in text.lower().replace("_", "-").replace("-", " ").split():
-        for group in _LANGUAGES:
-            if word in group:
-                return group[0]
-    return None
-
-
-def _exe_root(root: Path, exe_names: list[str], languages: "list[str] | None" = None) -> Path:
-    """The game root is the folder holding the game's exe (or other marker).
-    Store installs sometimes nest it one level down. Epic's "Selective
-    Downloads" titles (Fallout 3 GOTY, Fallout: New Vegas, ...) hold one full
-    copy per language ("Fallout 3 GOTY English", "... French", ...) under a
-    top-level Launcher.exe; then take the language Legendary installed
-    (*languages*, from its install tags), else the one launcher_settings.cfg
-    names, else English."""
-    if not exe_names or _has_exe(root, exe_names):
-        return root
-    try:
-        subdirs = sorted(d for d in root.iterdir() if d.is_dir())
-    except OSError:
-        return root
-    hits = [d for d in subdirs if _has_exe(d, exe_names)]
-    if len(hits) <= 1:
-        return hits[0] if hits else root
-    by_lang = {_language(d.name.split()[-1]): d for d in hits}
-    for code in languages or []:
-        if code in by_lang:
-            return by_lang[code]
-    try:
-        settings = (root / "launcher_settings.cfg").read_text(errors="replace").lower()
-    except OSError:
-        settings = ""
-    for d in hits:
-        if d.name.lower() in settings or d.name.split()[-1].lower() in settings:
-            return d
-    return by_lang.get("en", hits[0])
-
-
 def find(exe_names: list[str], app_names: list[str], rows: "list[Row] | None" = None,
          legendary: "dict | None" = None, markers: "list[str] | None" = None):
     """(install root, Row, matched exe or None) for a game, or None. Pass
@@ -189,9 +126,9 @@ def find(exe_names: list[str], app_names: list[str], rows: "list[Row] | None" = 
                 if entry.get("install_path"):
                     root = Path(entry["install_path"])
                 # Selective Downloads: the language pack Legendary installed.
-                languages = [c for c in (_language(str(t)) for t in entry.get("install_tags") or []) if c]
+                languages = [c for c in (gameroot.language(str(t)) for t in entry.get("install_tags") or []) if c]
             if root.is_dir():
-                return _exe_root(root, exe_names + list(markers or []), languages), row, None
+                return gameroot.resolve(root, exe_names + list(markers or []), languages)[0], row, None
         return None
     for row in rows:
         for exe in exe_names:

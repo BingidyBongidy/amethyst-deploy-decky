@@ -42,6 +42,19 @@ r, e = call("configure_game", game="Fallout 3"); print("configure F3:", r, e)
 assert not e and r["source"] == "unifideck" and r["prefix"].endswith("adeae8bbfc94427db57c7dfecce3f1d4/pfx"), (r, e)
 assert r["path"].endswith("Fallout 3 GOTY English"), r["path"]
 assert call("game_folder_check", game="Fallout 3")[0]["data_exists"]
+# Folder picker: starting places, then a folder whose subfolders look like the game.
+places, e = call("browse_folders"); print("places:", [p["name"] for p in places["folders"]][:4], e)
+assert places["folders"][0]["name"] == "Home"
+fo3_root = "/tmp/bhome/Games/Epic/Fallout3"
+b, e = call("browse_folders", path=fo3_root, game="Fallout 3")
+print("browse:", [(f["name"], f["looks_like_game"]) for f in b["folders"]], b["looks_like_game"], e)
+assert any(f["looks_like_game"] for f in b["folders"]) and not b["looks_like_game"]
+# A folder chosen by hand that isn't the game asks first; force uses it anyway.
+r, e = call("configure_game", game="Fallout 3", path="/tmp/bhome/Downloads"); print("manual wrong:", r, e)
+assert r["needs_confirm"] and not r["configured"], r
+# Choosing the top folder by hand is fine: the resolver finds the language folder below it.
+r, e = call("configure_game", game="Fallout 3", path=fo3_root); print("manual top:", r["path"], e)
+assert r["configured"] and r["path"].endswith("Fallout 3 GOTY English"), r
 f3g = next(x for x in call("list_games")[0] if x["name"] == "Fallout 3")
 assert f3g["configured"] and f3g["shortcut_appid"] == str(-123456789 & 0xFFFFFFFF), f3g
 print("configure:", call("configure_game", game=G))
