@@ -9,6 +9,8 @@ export type Game = {
   profiles: string[];
   deployed_profile: string;
   deploy_active: boolean;
+  /** Non-Steam shortcut id (Unifideck etc.), "" when the game launches as a Steam app. */
+  shortcut_appid?: string;
 };
 /** list_games from the bridge: a Game plus what the full UI needs. */
 export type BridgeGame = Game & {

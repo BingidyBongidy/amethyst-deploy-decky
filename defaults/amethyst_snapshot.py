@@ -21,7 +21,7 @@ out = []
 for name, game in sorted(discover_games().items()):
     entry = {"name": name, "game_id": getattr(game, "game_id", "") or "",
              "steam_id": "", "configured": False, "profiles": [],
-             "deployed_profile": "", "deploy_active": False}
+             "deployed_profile": "", "deploy_active": False, "shortcut_appid": ""}
     try:
         entry["configured"] = bool(game.is_configured())
     except Exception:
@@ -43,6 +43,11 @@ for name, game in sorted(discover_games().items()):
         try:
             entry["deploy_active"] = bool(game.get_deploy_active())
             entry["deployed_profile"] = game.get_last_deployed_profile() or ""
+        except Exception:
+            pass
+        try:
+            # Non-Steam shortcut (e.g. Unifideck): Deploy & Play launches this.
+            entry["shortcut_appid"] = str(game.get_shortcut_appid() or "")
         except Exception:
             pass
     out.append(entry)

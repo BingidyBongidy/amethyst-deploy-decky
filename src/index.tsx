@@ -270,6 +270,22 @@ export default definePlugin(() => {
     if (s.ok && launch) runApp(launch);
   });
 
+  // Installs keep running when the page is closed: say when one finishes or
+  // needs an answer (the prompt opens again in the full-screen page).
+  const asked = new Set<string>();
+  const onTask = addEventListener<[string, any]>("amethyst_event", (event, t) => {
+    if (event !== "task" || !t) return;
+    if (t.state === "done") {
+      toaster.toast({ title: "Amethyst: installed", body: (t.result?.installed ?? [t.title]).join(", ") });
+    } else if (t.state === "error") {
+      toaster.toast({ title: "Amethyst: install failed", body: `${t.title}: ${t.error}` });
+    } else if (t.state === "choice" && !asked.has(t.id)) {
+      asked.add(t.id);
+      toaster.toast({ title: "Amethyst needs you", body: `${t.title}: choose options in Amethyst`,
+                      onClick: openFullUI });
+    }
+  });
+
   return {
     name: "Amethyst Deploy",
     titleView: <div className={staticClasses.Title}>Amethyst Deploy</div>,
@@ -277,6 +293,7 @@ export default definePlugin(() => {
     icon: <FaGem />,
     onDismount() {
       removeEventListener("amethyst_done", done);
+      removeEventListener("amethyst_event", onTask);
       routerHook.removeRoute("/amethyst");
     },
   };
