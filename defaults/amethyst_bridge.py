@@ -749,6 +749,28 @@ class Bridge:
         return self.taskmgr.start(task, lambda t: self.nexus.download_install(
             t, g, pdir, mod_id, file_id, GAME_LOCK))
 
+    def nexus_manual_install(self, game: str, profile: str, mod_id: int, file_id: int,
+                             title: str = ""):
+        """Free accounts. Returns {task, url}: open url (the file's Nexus download
+        page) in Steam's browser; the task installs the file once it's in
+        Downloads. url is "" when it's already downloaded (installs straight away)."""
+        g, pdir = self._task_target(game, profile)
+        task = Task(self.taskmgr, "nexus", title or f"Nexus mod {mod_id}", game, profile)
+        box: dict = {}
+        ready = threading.Event()
+
+        def on_url(url):
+            box["url"] = url
+            ready.set()
+
+        self.taskmgr.start(task, lambda t: self.nexus.manual_install(
+            t, g, pdir, mod_id, file_id, GAME_LOCK, on_url))
+        while not ready.wait(0.2) and task.state not in ("done", "error", "cancelled"):
+            pass
+        if task.state == "error":
+            raise BridgeError(task.error)
+        return {"task": task.public(), "url": box.get("url", "")}
+
     # ---------- RPC: Thunderstore ----------
 
     @unlocked

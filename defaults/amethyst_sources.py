@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import html
 import http.server
+import queue
 import secrets
 import socket
 import threading
@@ -291,6 +292,55 @@ class Nexus:
                                         file_id=int(file_id), archive_name=result.file_name,
                                         mod_info=info, file_info=file)
         name = install_archive_flow(task, g, profile_dir, Path(result.file_path),
+                                    game_lock=game_lock, meta=meta)
+        return {"installed": [name]}
+
+
+    def manual_install(self, task: Task, g, profile_dir: Path, mod_id: int,
+                       file_id: int, game_lock, on_url) -> dict:
+        """Free accounts: Nexus only allows a download from its own page. Same
+        flow as the GUI's non-premium install (gui_qt/nexus_browser_view.py
+        _open_manual_file -> Nexus/manual_download_watch.start_manual_install):
+        hand back the file's download page for the plugin to open in Steam's
+        browser, watch Downloads, and install the archive when it lands.
+        on_url(url) is called once ("" when the file is already downloaded)."""
+        from Nexus.manual_download_watch import start_manual_install
+        api, domain = self.require(), nexus_domain(g)
+        task.set_step("Looking up the file")
+        info, files = self._mod_data(api, domain, mod_id)
+        file = next((f for f in files if f.file_id == int(file_id)), None)
+        if file is None:
+            raise TaskError("That file is no longer on Nexus.")
+        task.title = info.name
+        arrived: queue.Queue = queue.Queue()
+        urls: list[str] = []
+        watcher, already = start_manual_install(
+            api=api, game_domain=domain, mod_id=int(mod_id), files=[file],
+            open_url_fn=urls.append, log_fn=task.log, mod_info=info,
+            on_archive=lambda path, meta, _f: arrived.put((path, meta)),
+            on_progress=lambda d, t: task.set_progress(d, t, f"Downloading {file.file_name}"),
+            on_timeout=lambda: arrived.put(None))
+        # Amethyst may add &nmm=1 (its "Mod manager download" setting), which
+        # hands off an nxm:// link Steam's browser can't use. We want the page
+        # with Slow download, which saves into Downloads.
+        url = urls[0].replace("&nmm=1", "") if urls else ""
+        on_url("" if already else url)
+        try:
+            task.set_step("Found it in Downloads" if already else
+                          "Waiting for the download: press Slow download on the Nexus page")
+            while True:
+                task.check()
+                try:
+                    item = arrived.get(timeout=0.5)
+                    break
+                except queue.Empty:
+                    continue
+        finally:
+            watcher.stop()
+        if item is None:
+            raise TaskError("No download arrived in Downloads, so nothing was installed.")
+        path, meta = item
+        name = install_archive_flow(task, g, profile_dir, Path(path),
                                     game_lock=game_lock, meta=meta)
         return {"installed": [name]}
 

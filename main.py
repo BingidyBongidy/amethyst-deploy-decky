@@ -76,7 +76,7 @@ BRIDGE_METHODS = {
     "local_archives": 30, "install_archive": 120,
     "nexus_status": 60, "nexus_login_start": 20, "nexus_login_stop": 10,
     "nexus_set_key": 60, "nexus_logout": 20, "nexus_mods": 60, "nexus_mod": 60,
-    "nexus_install": 120, "ts_mods": 60, "ts_install": 120,
+    "nexus_install": 120, "nexus_manual_install": 120, "ts_mods": 60, "ts_install": 120,
 }
 
 

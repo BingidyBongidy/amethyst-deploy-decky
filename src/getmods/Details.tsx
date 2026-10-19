@@ -1,12 +1,12 @@
-import { DialogButton, Focusable } from "@decky/ui";
+import { DialogButton, Focusable, Navigation } from "@decky/ui";
 import { ReactNode, useEffect, useRef, useState } from "react";
 import { FaDownload, FaStar, FaThumbsUp } from "react-icons/fa";
 import { Loading, LongText, Note, formatSize, scrollOnFocus, swallowB } from "../ui";
-import { NexusCard, NexusFile, NexusMod, TsCard, bridge, errText, startInstall } from "../shared";
+import { NexusCard, NexusFile, NexusMod, Task, TsCard, bridge, errText, startInstall, toast } from "../shared";
 import { Item, compact, day, hideBroken } from "./common";
 
-const PREMIUM_NOTE = "Installing from Nexus needs Nexus Premium. With a free account, save the file to Downloads "
-  + "from another device and install it from the Downloads tab.";
+const FREE_NOTE = "Free account: pressing a file opens its Nexus page. Use the trackpad to press "
+  + "Slow download (log in to the Nexus site there the first time); it installs as soon as the download finishes.";
 
 type Props = {
   item: Item;
@@ -70,13 +70,29 @@ function NexusDetails(p: Props & { card: NexusCard; backRef: React.RefObject<HTM
 
   const card: NexusCard = mod ?? p.card;
   const premium = p.premium || !!mod?.premium;
-  const canInstall = premium && !p.locked && !busy;
+  const canInstall = !p.locked && !busy;
 
   const install = async (f: NexusFile) => {
     if (!canInstall) return;
     setBusy(true);
-    await startInstall("nexus_install",
-      { game: p.game, profile: p.profile, mod_id: card.id, file_id: f.id, title: card.name }, card.name);
+    const params = { game: p.game, profile: p.profile, mod_id: card.id, file_id: f.id, title: card.name };
+    if (premium) {
+      await startInstall("nexus_install", params, card.name);
+    } else {
+      // Nexus only lets free accounts download from its own page: open it in
+      // Steam's browser; the bridge installs the file when it lands in Downloads.
+      try {
+        const r = await bridge<{ task: Task; url: string }>("nexus_manual_install", params);
+        if (r.url) {
+          Navigation.NavigateToExternalWeb(r.url);
+          toast(`Press Slow download for ${card.name}. It installs when the download finishes.`);
+        } else {
+          toast(`Installing ${card.name} (already in Downloads)`);
+        }
+      } catch (e) {
+        toast(errText(e));
+      }
+    }
     setBusy(false);
   };
 
@@ -95,8 +111,8 @@ function NexusDetails(p: Props & { card: NexusCard; backRef: React.RefObject<HTM
       </Header>
 
       <Heading>Files</Heading>
-      {!premium && <div className="amd-warn" style={{ padding: "4px 14px 8px" }}>{PREMIUM_NOTE}</div>}
-      {premium && p.locked && <div className="amd-warn" style={{ padding: "4px 14px 8px" }}>A deploy is running. Install when it finishes.</div>}
+      {!premium && <div className="amd-sub" style={{ padding: "4px 14px 8px" }}>{FREE_NOTE}</div>}
+      {p.locked && <div className="amd-warn" style={{ padding: "4px 14px 8px" }}>A deploy is running. Install when it finishes.</div>}
       {error ? (
         <Focusable flow-children="vertical">
           <Note>{error}</Note>
@@ -111,7 +127,7 @@ function NexusDetails(p: Props & { card: NexusCard; backRef: React.RefObject<HTM
             <Focusable key={f.id} className="amd-card" focusClassName="amd-focus" onFocus={scrollOnFocus}
               style={{ alignItems: "flex-start", opacity: canInstall ? 1 : 0.75 }}
               onActivate={() => install(f)}
-              onOKActionDescription={canInstall ? "Install" : undefined}>
+              onOKActionDescription={canInstall ? (premium ? "Install" : "Open download page") : undefined}>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ display: "flex", gap: 8, alignItems: "baseline" }}>
                   <span className="amd-name" style={{ fontSize: 15 }}>{f.name || f.file_name}</span>
