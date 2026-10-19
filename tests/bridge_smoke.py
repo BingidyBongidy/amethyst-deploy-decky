@@ -60,6 +60,8 @@ r, e = call("move_plugin", game=G, profile="default", name="CoolMod.esp", to_ind
 r, e = call("set_plugin_enabled", game=G, profile="default", name="CoolMod.esp", enabled=False); print("disable CoolMod:", [(x["name"], x["enabled"], x["missing_masters"]) for x in r], e)
 print("vanilla move:", call("move_plugin", game=G, profile="default", name="Skyrim.esm", to_index=3)[1])
 print("disable mod -> plugins:", [ (x["name"]) for x in call("set_mod_enabled", game=G, profile="default", name="Patch Pack", enabled=False)[0] if False] or "", [(x["name"], x["enabled"]) for x in call("plugins", game=G, profile="default")[0]])
+r, e = call("remove_mod", game=G, profile="default", name="Textures HD"); print("uninstall:", [x["name"] for x in r or []], e)
+assert not e and all(x["name"] != "Textures HD" for x in r) and not os.path.exists(f"{root}/Textures HD"), (r, e)
 print("new profile:", call("create_profile", game=G, name="Survival"))
 print("dupe profile:", call("create_profile", game=G, name="Survival")[1])
 print("loot:", call("loot_sort", game=G, profile="default")[1])

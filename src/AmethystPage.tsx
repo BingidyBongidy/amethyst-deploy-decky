@@ -44,6 +44,13 @@ function ModsTab({ game, profile, locked, reload }: { game: string; profile: str
         canToggle={(m) => !m.separator && !m.locked}
         canMove={() => true}
         toggleLabel={(m) => (m.enabled ? "Disable" : "Enable")}
+        optionLabel={(m) => (m.separator ? undefined : "Uninstall")}
+        onOption={(m) => showModal(
+          <ConfirmModal strTitle={`Uninstall ${m.label}?`}
+            strDescription="This removes the mod's files from every profile. You can reinstall it later."
+            strOKButtonText="Uninstall" bDestructiveWarning
+            onOK={() => save(rows.filter((x) => x.name !== m.name),
+              () => bridge<Mod[]>("remove_mod", { game, profile, name: m.name }))} />)}
         onToggle={(m) => save(
           rows.map((x) => (x.name === m.name ? { ...x, enabled: !m.enabled } : x)),
           () => bridge<Mod[]>("set_mod_enabled", { game, profile, name: m.name, enabled: !m.enabled }))}
@@ -93,8 +100,9 @@ function PluginsTab({ game, profile, loot, locked, reload }: {
             {saving ? "Working…" : "Sort with LOOT"}
           </DialogButton>
         )}
-        <span className="amd-status" style={{ paddingBottom: 0 }}>
-          {rows.filter((r) => r.enabled).length} of {rows.length} active · load order, top loads first
+        <span className="amd-status" style={{ paddingBottom: 0, whiteSpace: "normal" }}>
+          The game loads these top to bottom.{loot ? " After installing mods, press Sort with LOOT." : ""}
+          {" "}{rows.filter((r) => r.enabled).length} of {rows.length} active.
         </span>
       </Focusable>
       {warnings.map((w, i) => <div key={i} className="amd-warn" style={{ padding: "0 14px 6px" }}>{w}</div>)}
@@ -327,7 +335,7 @@ export function AmethystPage() {
     const tabs = [
       { id: "mods", title: "Mods", content: ctx ? <ModsTab {...ctx} /> : needProfile },
       ...(current?.has_plugins ? [{
-        id: "plugins", title: "Plugins",
+        id: "plugins", title: "Load order",
         content: ctx ? <PluginsTab {...ctx} loot={current.loot} /> : needProfile,
       }] : []),
       ...(current && (current.nexus_domain || current.ts_community) ? [{

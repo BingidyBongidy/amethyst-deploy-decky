@@ -101,6 +101,35 @@ def _root_for_exe(row: Row, exe_name: str) -> "Path | None":
     return None
 
 
+def _has_exe(folder: Path, exe_names: list[str]) -> bool:
+    """True if *folder* holds any of the handler's exes (case-insensitive)."""
+    for exe in exe_names:
+        cur = folder
+        for part in [p for p in exe.replace("\\", "/").split("/") if p]:
+            try:
+                cur = next((c for c in cur.iterdir() if c.name.lower() == part.lower()), None)
+            except OSError:
+                cur = None
+            if cur is None:
+                break
+        if cur is not None and cur.is_file():
+            return True
+    return False
+
+
+def _exe_root(root: Path, exe_names: list[str]) -> Path:
+    """The game root is the folder holding the game's exe. Store installs
+    sometimes nest it one level down; fall back to *root* when unsure."""
+    if not exe_names or _has_exe(root, exe_names):
+        return root
+    try:
+        subdirs = [d for d in root.iterdir() if d.is_dir()]
+    except OSError:
+        return root
+    hits = [d for d in subdirs if _has_exe(d, exe_names)]
+    return hits[0] if len(hits) == 1 else root
+
+
 def find(exe_names: list[str], app_names: list[str], rows: "list[Row] | None" = None,
          legendary: "dict | None" = None):
     """(install root, Row, matched exe or None) for a game, or None. Pass
@@ -122,7 +151,7 @@ def find(exe_names: list[str], app_names: list[str], rows: "list[Row] | None" = 
                 if entry.get("install_path"):
                     root = Path(entry["install_path"])
             if root.is_dir():
-                return root, row, None
+                return _exe_root(root, exe_names), row, None
         return None
     for row in rows:
         for exe in exe_names:

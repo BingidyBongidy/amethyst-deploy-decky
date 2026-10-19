@@ -6,6 +6,13 @@ Mode and no mouse-style UI.
 
 ## Where things stand
 
+**v0.3.0 (2026-10-19) is on `main`**: phases 1 and 2 below are built; device testing
+is in progress (checklists in sections 2 and 3). Open issue: on a Unifideck Epic
+Fallout 3 install the Load order tab reported `missing: Fallout3.esm`. The bridge
+now logs the game folder's contents when no base-game plugins are found
+(`bridge: plugins: ...` in the Decky log), and Unifideck setup now picks the folder
+that holds the game's exe; needs the log from the device to confirm the cause.
+
 ### Done and on `main` (v0.2.0)
 - Quick Access menu panel: pick game and profile, **Deploy & Play**,
   **Deploy only**, **Restore vanilla**, live log, and a toast when finished.

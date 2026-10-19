@@ -15,6 +15,9 @@ type Props<T> = {
   onMove: (item: T, toIndex: number, order: T[]) => void;
   /** Blocks toggles and moves (a save or a deploy is in flight). Navigation still works. */
   disabled?: boolean;
+  /** Y button on a row (e.g. Uninstall); label "" or undefined = no action for that row. */
+  optionLabel?: (item: T) => string | undefined;
+  onOption?: (item: T) => void;
 };
 
 type Grab<T> = { key: string; from: number; order: T[] };
@@ -81,6 +84,10 @@ export function ReorderList<T>(p: Props<T>) {
             onOKActionDescription={grab ? (grabbed ? "Drop here" : undefined)
               : !p.disabled && p.canToggle(item) ? p.toggleLabel(item) : undefined}
             onSecondaryActionDescription={!grab && !p.disabled && p.canMove(item) ? "Move" : undefined}
+            onOptionsButton={() => {
+              if (!grab && !p.disabled && p.optionLabel?.(item)) p.onOption?.(item);
+            }}
+            onOptionsActionDescription={!grab && !p.disabled ? p.optionLabel?.(item) || undefined : undefined}
             onCancelActionDescription={grab ? "Cancel move" : undefined}
           >
             {p.renderRow(item, { grabbed })}

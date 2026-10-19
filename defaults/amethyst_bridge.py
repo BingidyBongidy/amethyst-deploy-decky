@@ -475,6 +475,24 @@ class Bridge:
                     self.log(f"plugin sync: {e}")
         return self._mod_rows(entries)
 
+    def remove_mod(self, game: str, profile: str, name: str):
+        """Uninstall a mod: Amethyst's full removal (Utils/mods/remove.py
+        remove_mods: undeploy its files, drop its plugins, delete its staging
+        folder and index rows), then drop its modlist row, which remove_mods
+        leaves to the caller (as gui_qt/app.py does)."""
+        g = self._configured(game)
+        pdir, path, entries = self._modlist(g, profile)
+        hit = next((e for e in entries if e.name == name), None)
+        if hit is None or hit.is_separator:
+            raise BridgeError(f"No mod named {name}.")
+        from Utils.mods.remove import remove_mods
+        from Utils.mods.modlist import modlist_lock, read_modlist, write_modlist
+        remove_mods(g, pdir, [name], log_fn=self.log)
+        with modlist_lock(path):
+            rows = [e for e in read_modlist(path) if e.name != name]
+            write_modlist(path, rows)
+        return self._mod_rows(rows)
+
     def move_mod(self, game: str, profile: str, name: str, to_index: int):
         g = self._configured(game)
         _, path, entries = self._modlist(g, profile)
@@ -533,7 +551,24 @@ class Bridge:
         g = self._configured(game)
         if not getattr(g, "plugin_extensions", None):
             return []
-        return self._plugin_json(self._plugin_rows(g, profile))
+        rows = self._plugin_rows(g, profile)
+        if not any(r.vanilla for r in rows):
+            self._log_missing_base_game(g)
+        return self._plugin_json(rows)
+
+    def _log_missing_base_game(self, g):
+        """No base-game plugins found: the saved game folder (or its Data
+        folder's spelling) doesn't match what Amethyst expects. Log what's
+        there so the Decky log shows why."""
+        try:
+            root = g.get_game_path()
+            data = g.get_vanilla_plugins_path() if hasattr(g, "get_vanilla_plugins_path") else None
+            top = sorted(p.name for p in root.iterdir())[:40] if root and root.is_dir() else []
+            self.log(f"plugins: {g.name}: no base-game plugins "
+                     f"{getattr(g, 'vanilla_plugins', [])} in {data} "
+                     f"(exists={bool(data and data.is_dir())}); game folder {root} has {top}")
+        except Exception as e:
+            self.log(f"plugins: {g.name}: base-game check failed: {e}")
 
     def _save_plugin_rows(self, g, profile, rows):
         from gui_qt.plugin_state import (save_plugins, master_block_enabled,

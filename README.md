@@ -1,20 +1,36 @@
 # Amethyst Deploy
 
-A [Decky Loader](https://github.com/SteamDeckHomebrew/decky-loader) plugin for deploying
-[Amethyst Mod Manager](https://github.com/ChrisDKN/Amethyst-Mod-Manager) profiles from Gaming Mode.
+A [Decky Loader](https://github.com/SteamDeckHomebrew/decky-loader) plugin that runs
+[Amethyst Mod Manager](https://github.com/ChrisDKN/Amethyst-Mod-Manager) from Gaming Mode
+with a controller. Set up games, find and install mods, sort the load order and play,
+without going to Desktop Mode. It drives Amethyst's own code; it doesn't modify or bundle
+Amethyst.
 
-Pick a game and profile in the Quick Access menu, then **Deploy & Play**, **Deploy only** or
-**Restore vanilla**. It wraps Amethyst's own CLI; it doesn't modify or bundle Amethyst.
+## What it does
 
-Installing mods, collections and load order still happen in the Amethyst GUI in Desktop Mode.
+- **Quick Access menu:** pick a game and profile, then **Deploy & Play**, **Deploy only**
+  or **Restore vanilla**. **Open Amethyst** opens the full-screen view.
+- **Mods:** turn mods on and off (A), move them (X, then the D-pad, then A), uninstall (Y).
+- **Load order** (Bethesda games): plugin order, master warnings and **Sort with LOOT**.
+- **Get mods:** browse and search Nexus Mods and Thunderstore.
+  - Nexus login: scan a QR code with your phone and paste your API key, or type it in.
+  - Nexus Premium installs in one press.
+  - Free accounts press the file's **Slow download** on the Nexus page in Steam's
+    browser (one trackpad click). The mod installs as soon as the download finishes.
+  - Thunderstore mods install in one press, with their dependencies.
+- **Downloads:** install any mod archive saved to `~/Downloads`.
+- **FOMOD and BAIN installers** show their options as controller pages.
+- **Setup:** find installed games and set them up for Amethyst. It finds games from
+  Steam, Heroic, Unifideck, Lutris, Faugus, Bottles and non-Steam shortcuts. Create
+  profiles here too.
 
 ## Requirements
 
-- Amethyst as the Flatpak or the AppImage in `~/Applications`. If neither is found, the
-  plugin offers to install the official Flatpak from the developer's own remote, and
-  shows an **Update Amethyst** button once it's there.
-- At least one game configured in Amethyst, with a profile. First-time setup (game path,
-  Nexus login, installing mods) is done in the Amethyst GUI in Desktop Mode.
+- Amethyst's Flatpak. If it isn't installed, the plugin offers to install the official
+  Flatpak from the developer's own remote, and shows an **Update Amethyst** button once
+  it's there. The AppImage in `~/Applications` works for deploy and restore only.
+- For Nexus: a Nexus Mods account. To download with a free account, log in to the Nexus
+  website once in Steam's browser.
 
 ## Install
 
@@ -28,17 +44,23 @@ pnpm i
 pnpm build
 ```
 
-Package `plugin.json`, `package.json`, `main.py`, `LICENSE`, `defaults/amethyst_snapshot.py`
-(at the plugin root) and `dist/index.js` into a folder named `Amethyst Deploy`, then zip it.
+Package `plugin.json`, `package.json`, `main.py`, `LICENSE`, `dist/index.js` and every
+`defaults/*.py` (at the plugin root) into a folder named `Amethyst Deploy`, then zip it.
 
 ## How it works
 
-- `main.py` finds the install (Flatpak first, then AppImage), and runs
-  `list-games` / `list-profiles` / `deploy` / `restore` with a clean environment
-  (Decky's bundled `LD_LIBRARY_PATH` breaks host binaries).
-- With the Flatpak, `amethyst_snapshot.py` runs inside Amethyst's own Python to get
-  every game's profiles, deploy state and Steam app ID in one call.
-- The frontend launches the game via `SteamClient.Apps.RunGame` once a deploy succeeds.
+- `main.py` (Decky backend) runs Amethyst's CLI for deploy and restore, installs the
+  Flatpak, and talks to the bridge. Host commands get a clean environment, because
+  Decky's bundled `LD_LIBRARY_PATH` breaks host binaries.
+- `defaults/amethyst_bridge.py` runs inside Amethyst's Flatpak Python and imports
+  Amethyst's own modules, so the plugin behaves like Amethyst's GUI. It covers games,
+  mods, plugins and setup.
+  - `amethyst_tasks.py`: background installs and downloads.
+  - `amethyst_sources.py`: Nexus and Thunderstore.
+  - `amethyst_unifideck.py`: Unifideck installs.
+- `src/` is the React frontend, built with Steam-native components for controller use.
+
+Testing and the current plan are in [PLAN.md](PLAN.md).
 
 ## Licence
 
