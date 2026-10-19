@@ -84,8 +84,11 @@ class Bridge:
     # ---------- helpers ----------
 
     def log(self, msg):
+        """Keep for recent_log and send to the Decky log (Amethyst captures our
+        stderr, so it can't be relied on to get there)."""
         self._log.append(str(msg))
         del self._log[:-200]
+        emit("log", str(msg))
 
     def _game(self, name: str):
         if not self.games:
@@ -176,6 +179,8 @@ class Bridge:
         index = InstalledIndex(log=self.log)
         uni_rows = unifideck.load_rows()
         legendary = unifideck.legendary_installed() if uni_rows else {}
+        self.log(f"detect: Unifideck games.map {unifideck.games_map_path()} -> "
+                 f"{len(uni_rows)} rows; Legendary installs {len(legendary)}")
         found = []
         for name, g in sorted(self.games.items()):
             try:
@@ -190,6 +195,8 @@ class Bridge:
                 continue
             if launchers:
                 found.append({"name": name, "launchers": list(launchers)})
+        self.log("detect: found " + (", ".join(f"{f['name']} ({'/'.join(f['launchers'])})"
+                                               for f in found) or "nothing"))
         return found
 
     @staticmethod

@@ -1,7 +1,7 @@
 import { DialogButton, Focusable, ModalRoot, showModal, TextField } from "@decky/ui";
 import { useEffect, useRef, useState } from "react";
 import qrcode from "qrcode-generator";
-import { Loading } from "../ui";
+import { Loading, Styles } from "../ui";
 import { NexusStatus, bridge, errText, toast, useBridgeEvent } from "../shared";
 
 /** The phone login page closes itself after 15 minutes (bridge side). */
@@ -39,6 +39,7 @@ function KeyModal({ closeModal, onDone }: { closeModal?: () => void; onDone: (s:
   };
   return (
     <ModalRoot closeModal={closeModal} onCancel={closeModal}>
+      <Styles />
       <div style={{ fontSize: 20, fontWeight: 600, paddingBottom: 8 }}>Nexus Mods API key</div>
       <div className="amd-sub" style={{ paddingBottom: 12 }}>
         Find it on nexusmods.com under Site preferences, API keys, Personal API Key. It's long, so the

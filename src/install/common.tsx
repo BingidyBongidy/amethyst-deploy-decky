@@ -1,11 +1,11 @@
 import { DialogButton, Focusable, ModalRoot, showModal, ShowModalResult } from "@decky/ui";
 import { ReactNode, useState } from "react";
-import { Check, LongText, ensureStyles, scrollOnFocus } from "../ui";
+import { Check, LongText, Styles, scrollOnFocus } from "../ui";
 
 function TextModal({ title, text, image, closeModal }: { title: string; text: string; image?: string; closeModal?: () => void }) {
-  ensureStyles();
   return (
     <ModalRoot closeModal={closeModal} bAllowFullSize>
+      <Styles />
       <div className="amd-modal" style={{ width: "min(900px, calc(100vw - 140px))", height: "min(560px, calc(100vh - 180px))" }}>
         <h2>{title}</h2>
         {image && <img src={image} style={{ maxWidth: "100%", maxHeight: 220, objectFit: "contain", alignSelf: "center" }} />}

@@ -20,7 +20,6 @@ import {
   GamesResult, JobStatus, launchId, listGames, runApp, selection,
   startGameJob, startJob, takePendingLaunch, toast, useJob,
 } from "./shared";
-import { ensureStyles, removeStyles } from "./ui";
 
 // Survives the QAM panel being closed/reopened.
 let cache: GamesResult | null = null;
@@ -254,7 +253,6 @@ function Content() {
 }
 
 export default definePlugin(() => {
-  ensureStyles();
   routerHook.addRoute("/amethyst", AmethystPage, { exact: true });
 
   // Global listener: finish-up work happens even if the QAM panel is closed.
@@ -293,7 +291,6 @@ export default definePlugin(() => {
       removeEventListener("amethyst_done", done);
       removeEventListener("amethyst_event", onTask);
       routerHook.removeRoute("/amethyst");
-      removeStyles();
     },
   };
 });

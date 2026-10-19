@@ -129,6 +129,9 @@ class BridgeClient:
                 except ValueError:
                     decky.logger.warning("bridge sent junk: %r", raw[:200])
                     continue
+                if msg.get("event") == "log":
+                    decky.logger.info("bridge: %s", msg.get("data"))
+                    continue
                 if msg.get("event"):
                     await decky.emit("amethyst_event", msg["event"], msg.get("data"))
                     continue

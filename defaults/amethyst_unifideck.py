@@ -24,12 +24,22 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
+def _xdg(var: str, default: Path) -> Path:
+    """The host's XDG dir. Inside Amethyst's Flatpak (where this runs) the XDG_*
+    variables point into the sandbox (~/.var/app/<id>/...), not where Unifideck,
+    a Decky plugin running on the host, keeps its files."""
+    value = os.environ.get(var)
+    if not value or os.environ.get("FLATPAK_ID"):
+        return default
+    return Path(value)
+
+
 def _data_dir() -> Path:
-    return Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share") / "unifideck"
+    return _xdg("XDG_DATA_HOME", Path.home() / ".local" / "share") / "unifideck"
 
 
 def _config_home() -> Path:
-    return Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
+    return _xdg("XDG_CONFIG_HOME", Path.home() / ".config")
 
 
 @dataclass
@@ -41,10 +51,14 @@ class Row:
     app_id: str      # unsigned shortcut id, or "" when Unifideck hasn't filled it in
 
 
+def games_map_path() -> Path:
+    return _data_dir() / "games.map"
+
+
 def load_rows() -> list[Row]:
     """Parse games.map the way Unifideck does (services/shortcut/games_map.py)."""
     try:
-        text = (_data_dir() / "games.map").read_text(encoding="utf-8")
+        text = games_map_path().read_text(encoding="utf-8")
     except OSError:
         return []
     rows = []

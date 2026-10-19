@@ -1,7 +1,11 @@
 import json, subprocess, sys, os, struct
 sys.path.insert(0, os.path.dirname(__file__)); import importlib.util
 spec = importlib.util.spec_from_file_location("mk", os.path.join(os.path.dirname(__file__), "mkplugin.py"))
-env = dict(os.environ, HOME="/tmp/bhome", PYTHONPATH=os.environ["AMETHYST_SRC"])
+# Like inside Amethyst's Flatpak: XDG_* point into the sandbox, not the host dirs.
+env = dict(os.environ, HOME="/tmp/bhome", PYTHONPATH=os.environ["AMETHYST_SRC"],
+           FLATPAK_ID="io.github.Amethyst.ModManager",
+           XDG_DATA_HOME="/tmp/bhome/.var/app/io.github.Amethyst.ModManager/data",
+           XDG_CONFIG_HOME="/tmp/bhome/.var/app/io.github.Amethyst.ModManager/config")
 p = subprocess.Popen([sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "defaults", "amethyst_bridge.py")],
                      cwd=os.environ["AMETHYST_SRC"], env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                      stderr=open("/tmp/bridge_stderr.log", "w"), text=True)

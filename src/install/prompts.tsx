@@ -1,6 +1,6 @@
 import { ConfirmModal, DialogButton, Focusable, ModalRoot, showModal, ShowModalResult } from "@decky/ui";
 import { ReactNode, useEffect, useRef, useState } from "react";
-import { ensureStyles, swallowB } from "../ui";
+import { Styles, swallowB } from "../ui";
 import { Task, TaskChoice, bridge, errText, toast, useBridgeEvent } from "../shared";
 import { Buttons, CheckList, showText, useToggleSet } from "./common";
 import { FomodWizard } from "./FomodWizard";
@@ -11,7 +11,6 @@ const openPrompts = new Map<string, ShowModalResult>();
 /** Open the prompt for a task waiting on a choice. No-op if one is already open for it. */
 export function openPrompt(task: Task) {
   if (!task.choice || openPrompts.has(task.id)) return;
-  ensureStyles();
   const r = showModal(<TaskPromptModal task={task} />, undefined, {
     fnOnClose: () => openPrompts.delete(task.id),
   });
@@ -90,6 +89,7 @@ function TaskPromptModal({ task, closeModal }: { task: Task; closeModal?: () => 
   return (
     <ModalRoot closeModal={close} onCancel={api.askCancel} bAllowFullSize={choice.kind === "fomod"}
       bDisableBackgroundDismiss bHideCloseIcon>
+      <Styles />
       {/* B anywhere inside asks to cancel the task instead of just closing. */}
       <Focusable onCancelButton={swallowB(api.askCancel)} onCancelActionDescription="Cancel install">
         {body}

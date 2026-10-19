@@ -10,7 +10,7 @@ import {
 import { ReactNode, useCallback, useEffect, useState } from "react";
 import { FaExclamationTriangle, FaLock } from "react-icons/fa";
 import { ReorderList } from "./ReorderList";
-import { Check, Loading, Note, ensureStyles, useRows } from "./ui";
+import { Check, Loading, Note, Styles, useRows } from "./ui";
 import { TaskTray } from "./install/TaskTray";
 import { DownloadsTab } from "./install/DownloadsTab";
 import { GetModsTab } from "./getmods/GetModsTab";
@@ -260,7 +260,6 @@ function pickProfile(g: BridgeGame, wanted?: string) {
 }
 
 export function AmethystPage() {
-  ensureStyles();
   const [games, setGames] = useState<BridgeGame[] | null>(null);
   const [error, setError] = useState("");
   const [game, setGame] = useState<string | undefined>(selection.game);
@@ -362,6 +361,7 @@ export function AmethystPage() {
 
   return (
     <div className="amd-page">
+      <Styles />
       {games && ready.length > 0 && (
         <Focusable className="amd-header" flow-children="horizontal">
           <div className="amd-pick">

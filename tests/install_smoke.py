@@ -8,7 +8,11 @@ Set SKIP_NETWORK=1 to leave out the Thunderstore and Nexus parts.
 import json, os, subprocess, sys, time, urllib.request, urllib.parse
 
 here = os.path.dirname(os.path.abspath(__file__))
-env = dict(os.environ, HOME="/tmp/bhome", PYTHONPATH=os.environ["AMETHYST_SRC"])
+# Like inside Amethyst's Flatpak: XDG_* point into the sandbox, not the host dirs.
+env = dict(os.environ, HOME="/tmp/bhome", PYTHONPATH=os.environ["AMETHYST_SRC"],
+           FLATPAK_ID="io.github.Amethyst.ModManager",
+           XDG_DATA_HOME="/tmp/bhome/.var/app/io.github.Amethyst.ModManager/data",
+           XDG_CONFIG_HOME="/tmp/bhome/.var/app/io.github.Amethyst.ModManager/config")
 p = subprocess.Popen([sys.executable, os.path.join(here, "..", "defaults", "amethyst_bridge.py")],
                      cwd=os.environ["AMETHYST_SRC"], env=env, stdin=subprocess.PIPE,
                      stdout=subprocess.PIPE, stderr=open("/tmp/install_stderr.log", "w"), text=True)

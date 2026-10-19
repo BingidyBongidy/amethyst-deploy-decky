@@ -45,19 +45,12 @@ export const INSTALL_CSS = `
 .amd-task .amd-btn { width: auto !important; min-width: 110px; flex: none; }
 `;
 
-const STYLE_ID = "amd-css";
-
-/** Put the plugin's one stylesheet in the document head (idempotent). Modals render
- * outside the page, so a global sheet styles them too. */
-export function ensureStyles() {
-  if (document.getElementById(STYLE_ID)) return;
-  const el = document.createElement("style");
-  el.id = STYLE_ID;
-  el.textContent = CSS + INSTALL_CSS;
-  document.head.appendChild(el);
-}
-
-export const removeStyles = () => document.getElementById(STYLE_ID)?.remove();
+/**
+ * Render inside every full-screen view and every modal. Decky runs plugin code
+ * in Steam's shared JS context, but views and modals render into other windows,
+ * so a <style> added to our own document.head never reaches them.
+ */
+export const Styles = () => <style>{CSS + INSTALL_CSS}</style>;
 
 /** Bytes -> "4.2 MB"; "" for 0 or unknown. */
 export function formatSize(bytes: number | undefined | null): string {
