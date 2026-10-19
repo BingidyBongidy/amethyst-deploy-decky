@@ -1,0 +1,11 @@
+{
+  "name": "Amethyst Deploy",
+  "author": "Brad",
+  "flags": [],
+  "api_version": 1,
+  "publish": {
+    "tags": ["mods", "amethyst"],
+    "description": "Pick a game and Amethyst Mod Manager profile, deploy it and launch, all from Gaming Mode.",
+    "image": "https://raw.githubusercontent.com/ChrisDKN/Amethyst-Mod-Manager/main/src/appimage/mod-manager.png"
+  }
+}
