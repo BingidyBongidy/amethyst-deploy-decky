@@ -10,7 +10,10 @@ n = 0
 def call(m, **kw):
     global n; n += 1
     p.stdin.write(json.dumps({"id": n, "method": m, "params": kw}) + "\n"); p.stdin.flush()
-    r = json.loads(p.stdout.readline()); assert r["id"] == n
+    r = json.loads(p.stdout.readline())
+    while r.get("event"):  # task progress etc. - not for this test
+        r = json.loads(p.stdout.readline())
+    assert r["id"] == n
     return r.get("result"), r.get("error")
 def plugin(path, masters):
     def sub(t, d): return t.encode()+struct.pack("<H", len(d))+d

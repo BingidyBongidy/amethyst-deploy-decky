@@ -65,26 +65,39 @@ import json  # noqa: E402
 
 # Methods the frontend may call on the bridge, with a timeout for each.
 # LOOT downloads its masterlist and reads every plugin, so it gets longest.
+# Installs and downloads run as bridge tasks and answer at once.
 BRIDGE_METHODS = {
     "list_games": 120, "detect_installed": 120, "configure_game": 120,
     "create_profile": 30, "mods": 120, "set_mod_enabled": 120, "move_mod": 60,
     "plugins": 180, "set_plugin_enabled": 180, "move_plugin": 180,
     "loot_sort": 600, "recent_log": 10,
+    "tasks": 10, "task_answer": 10, "task_cancel": 10,
+    "fomod_view": 30, "fomod_toggle": 30, "fomod_image": 30,
+    "local_archives": 30, "install_archive": 120,
+    "nexus_status": 60, "nexus_login_start": 20, "nexus_login_stop": 10,
+    "nexus_set_key": 60, "nexus_logout": 20, "nexus_mods": 60, "nexus_mod": 60,
+    "nexus_install": 120, "ts_mods": 60, "ts_install": 120,
 }
+TERMINAL = ("done", "error", "cancelled")
 
 
 class BridgeClient:
     """One long-lived amethyst_bridge.py inside Amethyst's Flatpak.
 
     Starting Amethyst's Python and discovering ~100 games takes a few
-    seconds, so we keep the process and talk JSON lines to it. Requests are
-    serialised; if it dies or times out it's restarted on the next call.
+    seconds, so we keep the process and talk JSON lines to it. A reader
+    task matches responses to requests by id and forwards unsolicited
+    events (task progress, Nexus login) to the frontend. If the helper
+    dies it's restarted on the next call.
     """
 
     def __init__(self):
         self.proc: "asyncio.subprocess.Process | None" = None
-        self.lock = asyncio.Lock()
+        self.start_lock = asyncio.Lock()
+        self.write_lock = asyncio.Lock()
         self.next_id = 0
+        self.pending: dict = {}
+        self.active_tasks: set = set()
 
     async def _start(self):
         script = Path(decky.DECKY_PLUGIN_DIR) / "amethyst_bridge.py"
@@ -93,12 +106,15 @@ class BridgeClient:
             stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE, env=_user_env(),
             limit=16 * 1024 * 1024)  # big mod lists make long JSON lines
-        asyncio.get_event_loop().create_task(self._drain_stderr(self.proc))
+        loop = asyncio.get_event_loop()
+        loop.create_task(self._drain_stderr(self.proc))
         hello = await asyncio.wait_for(self.proc.stdout.readline(), 120)
         if not hello:
             await self.stop()
             raise RuntimeError("Amethyst's helper exited on startup - check the Decky log.")
         decky.logger.info("bridge ready: %s", hello.decode().strip())
+        self.active_tasks.clear()
+        loop.create_task(self._read(self.proc))
 
     @staticmethod
     async def _drain_stderr(proc):
@@ -107,6 +123,38 @@ class BridgeClient:
             line = raw.decode(errors="replace").rstrip()
             if line and not line.startswith("[startup]"):
                 decky.logger.debug("bridge: %s", line)
+
+    async def _read(self, proc):
+        try:
+            async for raw in proc.stdout:
+                try:
+                    msg = json.loads(raw)
+                except ValueError:
+                    decky.logger.warning("bridge sent junk: %r", raw[:200])
+                    continue
+                if msg.get("event"):
+                    data = msg.get("data")
+                    if msg["event"] == "task" and isinstance(data, dict):
+                        if data.get("state") in TERMINAL:
+                            self.active_tasks.discard(data.get("id"))
+                        else:
+                            self.active_tasks.add(data.get("id"))
+                    await decky.emit("amethyst_event", msg["event"], data)
+                    continue
+                fut = self.pending.pop(msg.get("id"), None)
+                if fut is not None and not fut.done():
+                    fut.set_result(msg)
+        finally:
+            for fut in self.pending.values():
+                if not fut.done():
+                    fut.set_exception(RuntimeError("Amethyst's helper stopped unexpectedly."))
+            self.pending.clear()
+            if self.active_tasks:
+                self.active_tasks.clear()
+                await decky.emit("amethyst_event", "bridge_stopped", {})
+
+    def busy(self) -> bool:
+        return bool(self.active_tasks)
 
     async def stop(self):
         proc, self.proc = self.proc, None
@@ -119,26 +167,23 @@ class BridgeClient:
                 await proc.wait()
 
     async def call(self, method: str, params: dict, timeout: float):
-        async with self.lock:
+        async with self.start_lock:
             if self.proc is None or self.proc.returncode is not None:
                 await self._start()
-            self.next_id += 1
-            rid = self.next_id
-            self.proc.stdin.write((json.dumps({"id": rid, "method": method,
-                                               "params": params}) + "\n").encode())
-            await self.proc.stdin.drain()
-            try:
-                while True:
-                    line = await asyncio.wait_for(self.proc.stdout.readline(), timeout)
-                    if not line:
-                        raise RuntimeError("Amethyst's helper stopped unexpectedly.")
-                    resp = json.loads(line)
-                    if resp.get("id") == rid:
-                        return resp
-            except (asyncio.TimeoutError, RuntimeError, ValueError):
-                # Out of sync or dead: throw it away so the next call starts clean.
-                await self.stop()
-                raise
+            proc = self.proc
+        self.next_id += 1
+        rid = self.next_id
+        fut = asyncio.get_event_loop().create_future()
+        self.pending[rid] = fut
+        async with self.write_lock:
+            proc.stdin.write((json.dumps({"id": rid, "method": method,
+                                          "params": params}) + "\n").encode())
+            await proc.stdin.drain()
+        try:
+            return await asyncio.wait_for(fut, timeout)
+        finally:
+            # A late answer is simply dropped; ids keep the stream in sync.
+            self.pending.pop(rid, None)
 
 
 class Plugin:
@@ -269,6 +314,8 @@ class Plugin:
         else:
             return {"ok": False, "error": f"unknown action {action}"}
         if self.bridge is not None:
+            if self.bridge.busy():
+                return {"ok": False, "error": "Wait for mod installs to finish first."}
             # Deploy/restore/update run as separate processes on the same files;
             # don't leave the helper holding them open. It restarts on demand.
             await self.bridge.stop()

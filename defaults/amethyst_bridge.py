@@ -14,6 +14,7 @@ import importlib
 import json
 import os
 import sys
+import threading
 import traceback
 from pathlib import Path
 
@@ -30,10 +31,43 @@ cli._setup_path()
 
 from Utils.games.discovery import discover_games  # noqa: E402
 
-PROTOCOL = 1
+# Our own helper modules sit next to this script (the plugin root).
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from amethyst_tasks import (  # noqa: E402
+    Task, TaskError, TaskManager, fomod_image, fomod_toggle, fomod_view,
+    install_archive_flow)
+from amethyst_sources import Nexus, Thunderstore, nexus_domain, ts_community  # noqa: E402
+
+PROTOCOL = 2
+
+_rpc_lock = threading.Lock()
 
 
-class BridgeError(Exception):
+def _send(obj):
+    line = json.dumps(obj, default=str) + "\n"
+    with _rpc_lock:
+        _rpc.write(line)
+        _rpc.flush()
+
+
+def emit(event: str, data):
+    """Unsolicited message to the plugin (task progress, login done)."""
+    _send({"id": None, "event": event, "data": data})
+
+
+# Background tasks write mod lists and staging folders; RPCs that touch game
+# state hold this too so the two never interleave.
+GAME_LOCK = threading.RLock()
+
+# RPCs that don't read or write game state, so they don't wait on GAME_LOCK
+# (a long install must not stall the UI's polling and browsing).
+UNLOCKED = {"ping", "recent_log", "tasks", "task_answer", "task_cancel",
+            "fomod_view", "fomod_toggle", "fomod_image", "local_archives",
+            "nexus_status", "nexus_login_start", "nexus_login_stop", "nexus_set_key",
+            "nexus_logout", "nexus_mods", "nexus_mod", "ts_mods"}
+
+
+class BridgeError(TaskError):
     """An expected failure, shown to the user as-is (no traceback)."""
 
 
@@ -41,6 +75,9 @@ class Bridge:
     def __init__(self):
         self.games: dict = {}
         self._log: list[str] = []
+        self.taskmgr = TaskManager(emit, self.log)
+        self.nexus = Nexus(emit, self.log)
+        self.thunderstore = Thunderstore(self.log)
 
     # ---------- helpers ----------
 
@@ -87,7 +124,13 @@ class Bridge:
                 "deploy_active": False, "deployed_profile": "",
                 "active_profile": "",
                 "has_plugins": bool(getattr(g, "plugin_extensions", None)),
-                "loot": bool(getattr(g, "loot_sort_enabled", False))}
+                "loot": bool(getattr(g, "loot_sort_enabled", False)),
+                "nexus_domain": "", "ts_community": ""}
+        try:
+            info["nexus_domain"] = nexus_domain(g)
+            info["ts_community"] = ts_community(g)
+        except Exception:
+            pass
         try:
             info["steam_id"] = str(g.effective_steam_id() or g.steam_id or "")
         except Exception:
@@ -581,6 +624,118 @@ class Bridge:
     def recent_log(self):
         return self._log[-50:]
 
+    # ---------- RPC: tasks (install, download) ----------
+
+    def tasks(self):
+        return [t.public() for t in self.taskmgr.tasks.values()]
+
+    def task_answer(self, task_id: str, value=None):
+        self.taskmgr.get(task_id).answer(value)
+        return {}
+
+    def task_cancel(self, task_id: str):
+        t = self.taskmgr.get(task_id)
+        t.cancel.set()
+        t._answered.set()   # wake a task parked on a choice
+        return t.public()
+
+    def fomod_view(self, task_id: str):
+        return fomod_view(self.taskmgr.get(task_id))
+
+    def fomod_toggle(self, task_id: str, step: int, group: int, name: str):
+        return fomod_toggle(self.taskmgr.get(task_id), step, group, name)
+
+    def fomod_image(self, task_id: str, step: int, group: int, name: str):
+        return fomod_image(self.taskmgr.get(task_id), step, group, name)
+
+    def _task_target(self, game: str, profile: str):
+        g = self._configured(game)
+        pdir = self._profile_dir(g, profile)
+        return g, pdir
+
+    # ---------- RPC: install from Downloads ----------
+
+    @staticmethod
+    def _archive_dirs() -> list[Path]:
+        """The folders Amethyst's manual-download watcher looks in
+        (Nexus/manual_download_watch.py): Downloads plus extra locations."""
+        dirs = []
+        try:
+            from Nexus.nexus_download import _get_downloads_dir
+            from Utils.downloads.locations import (
+                is_default_downloads_disabled, load_extra_download_locations)
+            if not is_default_downloads_disabled():
+                dirs.append(Path(_get_downloads_dir()))
+            dirs += [Path(p) for p in load_extra_download_locations()]
+        except Exception as e:
+            print(f"download dirs: {e}", file=sys.stderr)
+            dirs.append(Path.home() / "Downloads")
+        return [d for d in dict.fromkeys(dirs) if d.is_dir()]
+
+    def local_archives(self):
+        from Utils.downloads.core import is_archive
+        out = []
+        for d in self._archive_dirs():
+            try:
+                for f in d.iterdir():
+                    if f.is_file() and is_archive(f.name):
+                        st = f.stat()
+                        out.append({"path": str(f), "name": f.name, "folder": str(d),
+                                    "size": st.st_size, "modified": int(st.st_mtime)})
+            except OSError as e:
+                self.log(f"list {d}: {e}")
+        out.sort(key=lambda a: -a["modified"])
+        return out[:300]
+
+    def install_archive(self, game: str, profile: str, path: str):
+        archive = Path(path)
+        if not any(archive.parent == d for d in self._archive_dirs()) or not archive.is_file():
+            raise BridgeError("That file isn't in your Downloads folder any more.")
+        g, pdir = self._task_target(game, profile)
+        task = Task(self.taskmgr, "archive", archive.name, game, profile)
+        return self.taskmgr.start(task, lambda t: {"installed": [install_archive_flow(
+            t, g, pdir, archive, game_lock=GAME_LOCK)]})
+
+    # ---------- RPC: Nexus ----------
+
+    def nexus_status(self, refresh: bool = False):
+        return self.nexus.status(refresh)
+
+    def nexus_login_start(self):
+        return self.nexus.start_login()
+
+    def nexus_login_stop(self):
+        return self.nexus.stop_login()
+
+    def nexus_set_key(self, key: str):
+        return self.nexus.use_key(key)
+
+    def nexus_logout(self):
+        return self.nexus.logout()
+
+    def nexus_mods(self, game: str, query: str = "", sort: str = "downloads", page: int = 0):
+        return self.nexus.mods(self._game(game), query, sort, page)
+
+    def nexus_mod(self, game: str, mod_id: int):
+        return self.nexus.mod(self._game(game), mod_id)
+
+    def nexus_install(self, game: str, profile: str, mod_id: int, file_id: int, title: str = ""):
+        g, pdir = self._task_target(game, profile)
+        task = Task(self.taskmgr, "nexus", title or f"Nexus mod {mod_id}", game, profile)
+        return self.taskmgr.start(task, lambda t: self.nexus.download_install(
+            t, g, pdir, mod_id, file_id, GAME_LOCK))
+
+    # ---------- RPC: Thunderstore ----------
+
+    def ts_mods(self, game: str, query: str = "", ordering: str = "most-downloaded", page: int = 0):
+        return self.thunderstore.mods(self._game(game), query, ordering, page)
+
+    def ts_install(self, game: str, profile: str, namespace: str, name: str):
+        g, pdir = self._task_target(game, profile)
+        task = Task(self.taskmgr, "thunderstore", name.replace("_", " "), game, profile)
+        return self.taskmgr.start(task, lambda t: self.thunderstore.download_install(
+            t, g, pdir, namespace, name, GAME_LOCK))
+
 
 def main():
     bridge = Bridge()
@@ -595,18 +750,21 @@ def main():
             method = req.get("method", "")
             if method.startswith("_") or not callable(getattr(bridge, method, None)):
                 raise BridgeError(f"Unknown method {method}")
-            result = getattr(bridge, method)(**(req.get("params") or {}))
+            fn = getattr(bridge, method)
+            if method in UNLOCKED:
+                result = fn(**(req.get("params") or {}))
+            else:
+                with GAME_LOCK:
+                    result = fn(**(req.get("params") or {}))
             resp = {"id": rid, "result": result}
-        except BridgeError as e:
+        except TaskError as e:
             resp = {"id": rid, "error": str(e)}
         except Exception as e:
             traceback.print_exc()
             resp = {"id": rid, "error": f"{type(e).__name__}: {e}"}
-        _rpc.write(json.dumps(resp, default=str) + "\n")
-        _rpc.flush()
+        _send(resp)
 
 
 if __name__ == "__main__":
-    _rpc.write(json.dumps({"id": None, "result": {"ready": True, "protocol": PROTOCOL}}) + "\n")
-    _rpc.flush()
+    _send({"id": None, "result": {"ready": True, "protocol": PROTOCOL}})
     main()
