@@ -1,5 +1,5 @@
 import { DialogButton, Focusable, ModalRoot, Navigation, showModal, TextField } from "@decky/ui";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Styles } from "../ui";
 import { NexusStatus, bridge, errText, toast, useBridgeEvent } from "../shared";
 
@@ -56,15 +56,11 @@ export function NexusLogin({ status, onStatus }: { status: NexusStatus | null; o
   const [waiting, setWaiting] = useState(false);
   const [error, setError] = useState("");
 
-  // Stop waiting for the browser when the user leaves this screen.
-  useEffect(() => () => { bridge("nexus_login_stop").catch(() => {}); }, []);
-
   useBridgeEvent((event, data) => {
     if (event !== "nexus_login") return;
     setWaiting(false);
     if (data?.logged_in) {
-      toast(`Logged in to Nexus Mods as ${data.name ?? "you"}`);
-      onStatus(data as NexusStatus);
+      onStatus(data as NexusStatus);   // the toast comes from index.tsx
     } else if (data?.error) {
       setError(data.error);
     }

@@ -271,6 +271,11 @@ export default definePlugin(() => {
   // needs an answer (the prompt opens again in the full-screen page).
   const asked = new Set<string>();
   const onTask = addEventListener<[string, any]>("amethyst_event", (event, t) => {
+    if (event === "nexus_login" && t) {
+      // Opening Steam's browser leaves the plugin page, so say it here.
+      toast(t.logged_in ? `Logged in to Nexus Mods as ${t.name ?? "you"}` : `Nexus login failed: ${t.error ?? ""}`);
+      return;
+    }
     if (event !== "task" || !t) return;
     if (t.state === "done") {
       toast(`Installed ${(t.result?.installed ?? [t.title]).join(", ")}`);
