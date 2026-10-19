@@ -94,15 +94,16 @@ Original spec:
 ### 3. Phase 2: browse, search and install mods (no Desktop Mode, ever)
 **Built 2026-10-19, not yet run on a device.** Backend: `defaults/amethyst_tasks.py`
 (background tasks, FOMOD/BAIN/exists/deps choices), `defaults/amethyst_sources.py`
-(Nexus API-key login via phone QR, browse/search, Premium download; Thunderstore),
+(Nexus login via Amethyst's OAuth in Steam's browser, browse/search, Premium
+download, free-account page + watch; Thunderstore),
 tested by `tests/install_smoke.py` (incl. a live Thunderstore install). Frontend:
 `src/install/` (task tray, prompts, FOMOD wizard, Downloads tab) and `src/getmods/`
 (Get mods tab). Device checks:
 - [ ] Downloads tab lists `~/Downloads`; A installs; a FOMOD archive opens the
       wizard, D-pad + A pick options, Install works; B asks "Cancel install?".
-- [ ] Get mods → Nexus: the QR opens the login page on a phone on the same Wi-Fi
-      (if not, the Deck's firewall/network blocks it - check the Decky log for the
-      URL); pasting the key logs in; browse/search/details work.
+- [ ] Get mods → Nexus → Log in: Nexus opens in Steam's browser; after Authorize
+      the redirect to localhost:7890 reaches Amethyst's callback (inside the Flatpak)
+      and the tab switches to logged in; browse/search/details work.
 - [ ] Nexus Premium file install.
 - [ ] Free account: pressing a file opens its Nexus page in Steam's browser;
       after logging in to the site once, Slow download saves into ~/Downloads

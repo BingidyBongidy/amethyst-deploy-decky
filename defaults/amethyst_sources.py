@@ -1,21 +1,15 @@
 """Mod sources for the bridge: Nexus Mods and Thunderstore.
 
-Nexus login is zero-mouse: the plugin shows a QR code for a page this module
-serves on the local network, and the user pastes their personal API key there
-from their phone. (Amethyst's GUI uses OAuth with a localhost redirect, which
-would need a cursor in Steam's browser.) The key is stored with Amethyst's own
-save_api_key, and Amethyst's NexusAPI accepts it.
+Nexus login uses Amethyst's own OAuth client (Nexus/nexus_oauth.py, as the GUI
+does): the plugin opens the authorise page in Steam's browser, the user presses
+Authorize, and Nexus redirects to Amethyst's callback on localhost:7890, which
+saves the tokens. Typing a personal API key is the fallback.
 """
 from __future__ import annotations
 
-import html
-import http.server
 import queue
-import secrets
-import socket
 import threading
 import time
-import urllib.parse
 from pathlib import Path
 
 from amethyst_tasks import Task, TaskError, install_archive_flow, strip_markup
@@ -45,7 +39,7 @@ class Nexus:
         self._api = None
         self._user = None
         self._checked = 0.0
-        self._server = None
+        self._client = None
         self._mod_cache: dict = {}   # (domain, mod_id) -> (time, info, files)
 
     # ----- credentials
@@ -120,87 +114,48 @@ class Nexus:
         self.stop_login()
         return {"logged_in": False}
 
-    # ----- phone login page
-
-    @staticmethod
-    def _lan_ip() -> str:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        try:
-            s.connect(("192.0.2.1", 9))   # no packet is sent for UDP connect
-            return s.getsockname()[0]
-        except OSError:
-            return ""
-        finally:
-            s.close()
+    # ----- login (Amethyst's OAuth client)
 
     def start_login(self) -> dict:
+        """Start Amethyst's OAuth flow (gui_qt/app.py _nexus_login) and return the
+        authorise URL for the plugin to open in Steam's browser. The callback
+        server waits 5 minutes; "nexus_login" is emitted when it ends."""
+        from Nexus import nexus_oauth
         self.stop_login()
-        ip = self._lan_ip()
-        if not ip:
-            raise TaskError("No network connection. Connect to Wi-Fi and try again.")
-        token = secrets.token_urlsafe(12)
-        nexus = self
+        ready = threading.Event()
+        box: dict = {}
 
-        class Handler(http.server.BaseHTTPRequestHandler):
-            def log_message(self, *a):
-                pass
+        def on_url(url):
+            box["url"] = url
+            ready.set()
 
-            def _page(self, body, status=200):
-                doc = (
-                    "<!doctype html><meta name=viewport content='width=device-width,initial-scale=1'>"
-                    "<title>Amethyst Deploy</title><style>body{font:16px system-ui;margin:24px;"
-                    "max-width:520px;background:#1b2838;color:#dfe3e6}a{color:#66c0f4}"
-                    "textarea{width:100%;height:120px;font:14px monospace}"
-                    "button{font-size:18px;padding:10px 20px;margin-top:12px}</style>" + body)
-                data = doc.encode()
-                self.send_response(status)
-                self.send_header("Content-Type", "text/html; charset=utf-8")
-                self.send_header("Content-Length", str(len(data)))
-                self.end_headers()
-                self.wfile.write(data)
+        def on_token(tokens):
+            from Nexus.nexus_api import NexusAPI
+            self._api, self._user = NexusAPI.from_oauth(tokens), None
+            self.emit("nexus_login", self.status(refresh=True))
 
-            def _ok_path(self):
-                return urllib.parse.urlparse(self.path).path == f"/{token}"
+        def on_error(msg):
+            self.log(f"nexus login: {msg}")
+            box["error"] = msg
+            ready.set()
+            self.emit("nexus_login", {"logged_in": False, "error": msg})
 
-            def do_GET(self):
-                if not self._ok_path():
-                    return self._page("<p>Not found.</p>", 404)
-                self._page(
-                    "<h2>Log in to Nexus Mods</h2><ol>"
-                    "<li>Open <a href='https://next.nexusmods.com/settings/api-keys' target=_blank>"
-                    "your Nexus API keys</a> and log in.</li>"
-                    "<li>Copy your <b>Personal API Key</b> (bottom of the page).</li>"
-                    "<li>Paste it here and press Send.</li></ol>"
-                    f"<form method=post action='/{token}'><textarea name=key "
-                    "placeholder='Paste your API key'></textarea><br><button>Send to Steam Deck</button></form>")
-
-            def do_POST(self):
-                if not self._ok_path():
-                    return self._page("<p>Not found.</p>", 404)
-                n = min(int(self.headers.get("Content-Length") or 0), 8192)
-                form = urllib.parse.parse_qs(self.rfile.read(n).decode(errors="replace"))
-                try:
-                    info = nexus.use_key((form.get("key") or [""])[0])
-                except TaskError as e:
-                    return self._page(f"<p>{html.escape(str(e))}</p><p><a href='/{token}'>Try again</a></p>")
-                self._page(f"<h2>Done</h2><p>Logged in as {html.escape(info['name'])}. "
-                           "You can close this page.</p>")
-                threading.Thread(target=nexus.stop_login, daemon=True).start()
-
-        server = http.server.ThreadingHTTPServer(("0.0.0.0", 0), Handler)
-        self._server = server
-        threading.Thread(target=server.serve_forever, daemon=True, name="nexus-login").start()
-        # Don't leave the page open forever.
-        timer = threading.Timer(15 * 60, lambda: self._server is server and self.stop_login())
-        timer.daemon = True   # must not keep the bridge alive on exit
-        timer.start()
-        return {"url": f"http://{ip}:{server.server_address[1]}/{token}"}
+        # The client also opens the URL with the desktop's default browser; in
+        # Gaming Mode the plugin opens it in Steam's browser instead. This only
+        # changes the name in our own process - Amethyst's files are untouched.
+        nexus_oauth.open_url = lambda _url: None
+        self._client = nexus_oauth.NexusOAuthClient(
+            on_token=on_token, on_error=on_error, on_status=self.log,
+            on_authorization_url=on_url)
+        self._client.start()
+        if not ready.wait(20) or "url" not in box:
+            raise TaskError(box.get("error") or "Couldn't start the Nexus login.")
+        return {"url": box["url"]}
 
     def stop_login(self):
-        server, self._server = self._server, None
-        if server is not None:
-            server.shutdown()
-            server.server_close()
+        client, self._client = self._client, None
+        if client is not None:
+            client.cancel()
         return {}
 
     # ----- browse

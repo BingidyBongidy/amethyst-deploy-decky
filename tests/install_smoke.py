@@ -87,19 +87,11 @@ print("task events seen:", sum(1 for e in events if e["event"] == "task"))
 
 if not os.environ.get("SKIP_NETWORK"):
     print("nexus status:", ok("nexus_status"))
-    url = ok("nexus_login_start")["url"]; print("login page:", url)
-    # The server listens on every interface; reach it locally (the LAN IP may
-    # be firewalled on a dev machine - phone reachability is a device check).
-    u = urllib.parse.urlparse(url); url = f"http://127.0.0.1:{u.port}{u.path}"
-    page = urllib.request.urlopen(url, timeout=10).read().decode()
-    assert "Personal API Key" in page
-    bad = urllib.request.urlopen(url, data=urllib.parse.urlencode({"key": "x" * 40}).encode(), timeout=60).read().decode()
-    print("bad key page says:", bad.split("<p>")[1].split("</p>")[0][:90])
-    assert "Try again" in bad
-    try:
-        urllib.request.urlopen(url.rsplit("/", 1)[0] + "/wrong", timeout=10); raise AssertionError("token not checked")
-    except urllib.error.HTTPError as e:
-        assert e.code == 404
+    # Amethyst's OAuth: the bridge returns the authorise page for Steam's browser
+    # and listens on localhost:7890 for the redirect.
+    url = ok("nexus_login_start")["url"]; print("login page:", url[:80])
+    assert url.startswith("https://users.nexusmods.com/oauth/authorize?") and "localhost%3A7890" in url, url
+    import socket; c = socket.create_connection(("127.0.0.1", 7890), timeout=5); c.close()
     ok("nexus_login_stop")
     print("nexus mods logged out:", call("nexus_mods", game=G)[1])
 

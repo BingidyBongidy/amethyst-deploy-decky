@@ -27,8 +27,9 @@ state, next steps and how to test.
   `Focusable` and Steam-native components. No mouse-style widgets, and no step that
   needs a trackpad or stick-as-cursor (that includes clicking on a web page in
   Steam's browser). If a flow can't meet this, raise it with Brad; don't ship it.
-  Agreed exception (2026-10-19): free Nexus accounts press "Slow download" on the
-  Nexus page in Steam's browser with the trackpad, one click per file.
+  Agreed exceptions (2026-10-19), both on Nexus pages in Steam's browser with the
+  trackpad: logging in to Nexus (sign in once, press Authorize), and free accounts
+  pressing "Slow download", one click per file.
 - Licence: GPL-3.0-or-later (the bridge imports Amethyst's GPL code).
 
 ## Debugging on the device

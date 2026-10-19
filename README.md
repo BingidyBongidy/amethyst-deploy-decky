@@ -13,7 +13,8 @@ Amethyst.
 - **Mods:** turn mods on and off (A), move them (X, then the D-pad, then A), uninstall (Y).
 - **Load order** (Bethesda games): plugin order, master warnings and **Sort with LOOT**.
 - **Get mods:** browse and search Nexus Mods and Thunderstore.
-  - Nexus login: scan a QR code with your phone and paste your API key, or type it in.
+  - Nexus login: Amethyst's own login, opened in Steam's browser (sign in once, press
+    Authorize), or type your personal API key.
   - Nexus Premium installs in one press.
   - Free accounts press the file's **Slow download** on the Nexus page in Steam's
     browser (one trackpad click). The mod installs as soon as the download finishes.

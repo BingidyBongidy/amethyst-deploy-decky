@@ -66,7 +66,7 @@ function GetMods({ game, profile, locked }: TabProps) {
 
   const logout = () => showModal(
     <ConfirmModal strTitle="Log out of Nexus Mods?"
-      strDescription="Amethyst forgets your API key. You can log in again with the QR code."
+      strDescription="Amethyst forgets your Nexus login. You can log in again any time."
       strOKButtonText="Log out" bDestructiveWarning
       onOK={async () => {
         try {
