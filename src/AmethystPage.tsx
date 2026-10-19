@@ -4,83 +4,20 @@ import {
   Dropdown,
   Focusable,
   showModal,
-  Spinner,
   Tabs,
   TextField,
 } from "@decky/ui";
-import { ReactNode, useCallback, useEffect, useRef, useState } from "react";
-import { FaCheckSquare, FaExclamationTriangle, FaLock, FaRegSquare } from "react-icons/fa";
+import { ReactNode, useCallback, useEffect, useState } from "react";
+import { FaExclamationTriangle, FaLock } from "react-icons/fa";
 import { ReorderList } from "./ReorderList";
+import { CSS, Check, Loading, Note, useRows } from "./ui";
+import { TaskTray } from "./install/TaskTray";
+import { DownloadsTab } from "./install/DownloadsTab";
+import { GetModsTab } from "./getmods/GetModsTab";
 import {
   BridgeGame, Mod, PluginRow, bridge, errText, resolveAppId, runApp, selection,
-  startGameJob, toast, useJob,
+  startGameJob, toast, useBridgeEvent, useJob,
 } from "./shared";
-
-const CSS = `
-.amd-page { padding: 48px 24px 0; height: 100%; box-sizing: border-box; display: flex; flex-direction: column; }
-.amd-header { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; padding-bottom: 8px; }
-.amd-header .amd-pick { min-width: 220px; }
-.amd-status { font-size: 12px; opacity: 0.7; padding-bottom: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.amd-tabs { flex: 1; min-height: 0; }
-.amd-row { display: flex; align-items: center; gap: 12px; padding: 8px 14px; border-radius: 4px; font-size: 14px; }
-.amd-row.amd-focus { background: rgba(255,255,255,0.12); }
-.amd-row.amd-sep { margin-top: 10px; font-size: 12px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; opacity: 0.75; border-bottom: 1px solid rgba(255,255,255,0.15); border-radius: 0; }
-.amd-row.amd-dim { opacity: 0.45; }
-.amd-row.amd-grabbed { background: rgba(26,159,255,0.35); outline: 2px solid #1a9fff; }
-.amd-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.amd-tag { font-size: 11px; opacity: 0.6; }
-.amd-warn { font-size: 12px; color: #ffc82c; }
-.amd-err { font-size: 12px; color: #ff6b6b; }
-.amd-note { padding: 12px 14px; font-size: 13px; opacity: 0.85; }
-.amd-bar { display: flex; gap: 12px; align-items: center; padding: 4px 0 10px; }
-`;
-
-const Check = ({ on }: { on: boolean }) => (on ? <FaCheckSquare /> : <FaRegSquare style={{ opacity: 0.6 }} />);
-
-const Note = ({ children }: { children: ReactNode }) => <div className="amd-note">{children}</div>;
-
-const Loading = ({ text }: { text: string }) => (
-  <div className="amd-note" style={{ display: "flex", gap: 8, alignItems: "center" }}>
-    <Spinner style={{ height: 20 }} /> {text}
-  </div>
-);
-
-/**
- * Rows loaded from the bridge with optimistic edits. `save` applies a local
- * change at once, runs the bridge call, then takes the bridge's rows as truth
- * (or puts the old rows back and shows the error).
- */
-function useRows<T>(load: (() => Promise<T[]>) | null, deps: unknown[]) {
-  const [rows, setRows] = useState<T[] | null>(null);
-  const [error, setError] = useState("");
-  const [saving, setSaving] = useState(false);
-  const rowsRef = useRef<T[] | null>(null);
-  rowsRef.current = rows;
-
-  useEffect(() => {
-    if (!load) return;
-    let live = true;
-    setRows(null);
-    setError("");
-    load().then((r) => live && setRows(r), (e) => live && setError(errText(e)));
-    return () => { live = false; };
-  }, deps);
-
-  const save = async (optimistic: T[] | null, call: () => Promise<T[]>) => {
-    const before = rowsRef.current;
-    if (optimistic) setRows(optimistic);
-    setSaving(true);
-    try {
-      setRows(await call());
-    } catch (e) {
-      setRows(before);
-      toast(errText(e));
-    } finally {
-      setSaving(false);
-    }
-  };
-  return { rows, setRows, error, saving, save };
-}
 
 // ---------- Mods ----------
 
@@ -351,6 +288,11 @@ export function AmethystPage() {
   });
   const busy = !!job.running;
 
+  // A finished install changes the mod list (and maybe plugins).
+  useBridgeEvent((event, data) => {
+    if (event === "task" && data?.state === "done") setReload((n) => n + 1);
+  });
+
   useEffect(() => { loadGames(); }, []);
   useEffect(() => {
     selection.game = game;
@@ -387,6 +329,14 @@ export function AmethystPage() {
         id: "plugins", title: "Plugins",
         content: ctx ? <PluginsTab {...ctx} loot={current.loot} /> : needProfile,
       }] : []),
+      ...(current && (current.nexus_domain || current.ts_community) ? [{
+        id: "get", title: "Get mods",
+        content: ctx && current ? <GetModsTab game={current} profile={ctx.profile} locked={busy} reload={reload} /> : needProfile,
+      }] : []),
+      {
+        id: "downloads", title: "Downloads",
+        content: ctx && current ? <DownloadsTab game={current} profile={ctx.profile} locked={busy} reload={reload} /> : needProfile,
+      },
       {
         id: "setup", title: "Setup",
         content: (
@@ -445,6 +395,7 @@ export function AmethystPage() {
         </Focusable>
       )}
       {status && <div className="amd-status">{status}</div>}
+      <TaskTray game={current} profile={profile} />
       {body}
     </div>
   );

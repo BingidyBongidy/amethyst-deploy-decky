@@ -1,5 +1,5 @@
 import { addEventListener, removeEventListener, callable, toaster } from "@decky/api";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 export type Game = {
   name: string;
@@ -11,7 +11,76 @@ export type Game = {
   deploy_active: boolean;
 };
 /** list_games from the bridge: a Game plus what the full UI needs. */
-export type BridgeGame = Game & { active_profile: string; has_plugins: boolean; loot: boolean };
+export type BridgeGame = Game & {
+  active_profile: string; has_plugins: boolean; loot: boolean;
+  /** Nexus game domain ("" when the game isn't on Nexus). */
+  nexus_domain: string;
+  /** Thunderstore community slug ("" when the game isn't on Thunderstore). */
+  ts_community: string;
+  /** Non-Steam shortcut (e.g. Unifideck): launch through this, not steam_id. */
+  shortcut_appid: string;
+};
+
+// ---------- background tasks (bridge: defaults/amethyst_tasks.py) ----------
+
+export type TaskState = "working" | "choice" | "done" | "error" | "cancelled";
+/** What a task in state "choice" is waiting for. Answer with task_answer. */
+export type TaskChoice =
+  /** Open fomod_view / fomod_toggle; answer "install" (or task_cancel). */
+  | { kind: "fomod"; title: string }
+  /** Answer the list of selected package names. */
+  | { kind: "bain"; mod: string; readme: string; packages: { name: string; label: string; default: boolean }[] }
+  /** Answer "replace" or "rename" (keep both); anything else cancels. */
+  | { kind: "exists"; mod: string }
+  /** Thunderstore dependencies to add. Answer the list of ids to install. */
+  | { kind: "deps"; mod: string; packages: { id: string; label: string; version: string; author: string }[] };
+export type Task = {
+  id: string;
+  kind: "archive" | "nexus" | "thunderstore";
+  title: string;
+  game: string;
+  profile: string;
+  state: TaskState;
+  step: string;
+  /** [done, total] bytes or items; total 0 = unknown. */
+  progress: [number, number] | null;
+  choice: TaskChoice | null;
+  result: { installed: string[] } | null;
+  error: string;
+};
+export const taskFinished = (t: Task) => t.state === "done" || t.state === "error" || t.state === "cancelled";
+
+export type FomodOption = {
+  name: string; description: string; image: boolean; selected: boolean;
+  /** Required | Recommended | Optional | CouldBeUsable | NotUsable */
+  type: string; locked: boolean; missing: boolean; previous: boolean;
+};
+export type FomodGroup = { name: string; type: string; options: FomodOption[] };
+/** steps are the VISIBLE steps; `index` is the step index fomod_toggle takes. */
+export type FomodView = {
+  title: string;
+  steps: { index: number; name: string; groups: FomodGroup[] }[];
+  errors: { step: number; message: string }[];
+};
+
+export type LocalArchive = { path: string; name: string; folder: string; size: number; modified: number };
+
+// ---------- mod sources (bridge: defaults/amethyst_sources.py) ----------
+
+export type NexusStatus = { logged_in: boolean; name?: string; premium?: boolean; error?: string };
+export type NexusCard = {
+  id: number; name: string; summary: string; picture: string; author: string; version: string;
+  endorsements: number; downloads: number; category: string; updated: string;
+};
+export type NexusFile = {
+  id: number; name: string; version: string; category: string; file_name: string;
+  size: number; description: string; primary: boolean;
+};
+export type NexusMod = NexusCard & { description: string; files: NexusFile[]; premium: boolean };
+export type TsCard = {
+  namespace: string; name: string; label: string; summary: string; picture: string; author: string;
+  downloads: number; rating: number; size: number; updated: string;
+};
 export type GamesResult = { ok: boolean; kind: string; games: Game[]; error: string };
 export type JobStatus = {
   action?: string;
@@ -50,6 +119,7 @@ export const toast = (body: string, title = "Amethyst") => toaster.toast({ title
 
 declare const SteamClient: any;
 declare const collectionStore: any;
+declare const appStore: any;
 
 // Shared by the QAM panel and the full-screen page; survives either closing.
 export const selection: { game?: string; profile?: string } = {};
@@ -62,8 +132,19 @@ export const takePendingLaunch = () => {
 
 const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
 
-/** Steam app ID for a game: Amethyst's own if it has one, else match by name in the library. */
-export function resolveAppId(g: Game): string | null {
+/**
+ * What to pass to RunGame for a game: its non-Steam shortcut (Unifideck and
+ * friends) when it has one, else Amethyst's Steam app ID, else a name match
+ * in the library. Shortcuts launch by game ID, not app ID.
+ */
+export function resolveAppId(g: Game & { shortcut_appid?: string }): string | null {
+  if (g.shortcut_appid) {
+    try {
+      const ov = appStore?.GetAppOverviewByAppID?.(Number(g.shortcut_appid));
+      if (ov?.m_gameid) return String(ov.m_gameid);
+    } catch { /* fall through to computing it */ }
+    return ((BigInt(g.shortcut_appid) << 32n) | 0x02000000n).toString();
+  }
   if (g.steam_id) return g.steam_id;
   try {
     const apps: any[] = collectionStore?.allAppsCollection?.allApps ?? [];
@@ -125,3 +206,40 @@ export function useJob(onDone?: (s: JobStatus) => void) {
   }, []);
   return [job, setJob] as const;
 }
+
+/** Bridge events (task progress, Nexus login) forwarded by main.py as amethyst_event. */
+export function useBridgeEvent(handler: (event: string, data: any) => void) {
+  const ref = useRef(handler);
+  ref.current = handler;
+  useEffect(() => {
+    const l = addEventListener<[string, any]>("amethyst_event", (e, d) => ref.current(e, d));
+    return () => { removeEventListener("amethyst_event", l); };
+  }, []);
+}
+
+/** Live list of bridge tasks: loads once, then follows "task" events. */
+export function useTasks() {
+  const [tasks, setTasks] = useState<Task[]>([]);
+  useEffect(() => {
+    bridge<Task[]>("tasks").then(setTasks, () => {});
+  }, []);
+  useBridgeEvent((event, data) => {
+    if (event === "task") {
+      setTasks((ts) => [...ts.filter((t) => t.id !== data.id), data as Task]);
+    } else if (event === "bridge_stopped") {
+      setTasks((ts) => ts.map((t) => taskFinished(t) ? t
+        : { ...t, state: "error", error: "Amethyst's helper stopped." }));
+    }
+  });
+  return tasks;
+}
+
+/** Props every content tab of the full-screen page gets. */
+export type TabProps = {
+  game: BridgeGame;
+  profile: string;
+  /** A deploy/restore job is running: bridge calls are refused, don't start anything. */
+  locked: boolean;
+  /** Bumps after deploys and finished installs; reload anything that depends on mods. */
+  reload: number;
+};
