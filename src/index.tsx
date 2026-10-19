@@ -1,5 +1,6 @@
 import {
   ButtonItem,
+  Navigation,
   DropdownItem,
   PanelSection,
   PanelSectionRow,
@@ -9,70 +10,25 @@ import {
 import {
   addEventListener,
   removeEventListener,
-  callable,
   definePlugin,
+  routerHook,
   toaster,
 } from "@decky/api";
 import { useEffect, useState } from "react";
 import { FaGem } from "react-icons/fa";
-
-type Game = {
-  name: string;
-  game_id: string;
-  steam_id: string;
-  configured: boolean;
-  profiles: string[];
-  deployed_profile: string;
-  deploy_active: boolean;
-};
-type GamesResult = { ok: boolean; kind: string; games: Game[]; error: string };
-type JobStatus = {
-  action?: string;
-  game?: string;
-  profile?: string;
-  running?: boolean;
-  ok?: boolean | null;
-  log: string[];
-};
-
-const listGames = callable<[], GamesResult>("list_games");
-const startJob = callable<[action: string, game: string, profile: string], { ok: boolean; error?: string }>("start_job");
-const jobStatus = callable<[], JobStatus>("job_status");
-
-declare const SteamClient: any;
-declare const collectionStore: any;
+import { AmethystPage } from "./AmethystPage";
+import {
+  GamesResult, JobStatus, listGames, resolveAppId, runApp, selection,
+  startGameJob, startJob, takePendingLaunch, useJob,
+} from "./shared";
 
 // Survives the QAM panel being closed/reopened.
 let cache: GamesResult | null = null;
-let selection: { game?: string; profile?: string } = {};
-let pendingLaunch: string | null = null;
 
-const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
-
-/** Steam app ID for a game: Amethyst's own if it has one, else match by name in the library. */
-function resolveAppId(g: Game): string | null {
-  if (g.steam_id) return g.steam_id;
-  try {
-    const apps: any[] = collectionStore?.allAppsCollection?.allApps ?? [];
-    const target = norm(g.name);
-    const exact = apps.find((a) => norm(a.display_name ?? "") === target);
-    if (exact) return String(exact.appid);
-    const loose = apps.find((a) => {
-      const n = norm(a.display_name ?? "");
-      return n.length > 3 && (n.includes(target) || target.includes(n));
-    });
-    return loose ? String(loose.appid) : null;
-  } catch {
-    return null;
-  }
-}
-
-function runApp(appId: string) {
-  try {
-    SteamClient.Apps.RunGame(appId, "", -1, 100);
-  } catch (e) {
-    toaster.toast({ title: "Amethyst", body: `Couldn't launch: ${e}` });
-  }
+function openFullUI() {
+  cache = null; // games or profiles may change in there; rescan when the panel reopens
+  Navigation.Navigate("/amethyst");
+  Navigation.CloseSideMenus();
 }
 
 function Content() {
@@ -80,8 +36,6 @@ function Content() {
   const [loading, setLoading] = useState(false);
   const [game, setGame] = useState<string | undefined>(selection.game);
   const [profile, setProfile] = useState<string | undefined>(selection.profile);
-  const [job, setJob] = useState<JobStatus>({ log: [] });
-
   const refresh = async () => {
     setLoading(true);
     try {
@@ -105,29 +59,18 @@ function Content() {
     }
   };
 
+  const [job, setJob] = useJob((s) => {
+    if (s.ok) refresh(); // pick up new deploy state
+  });
+
   useEffect(() => {
     if (!cache) refresh();
-    jobStatus().then(setJob);
-    const onLog = addEventListener<[string]>("amethyst_log", (line) =>
-      setJob((j) => {
-        const last = j.log[j.log.length - 1];
-        // collapse flatpak progress redraws into one line
-        const strip = (s: string) => s.replace(/[\d.%\s/]+/g, "").slice(0, 30);
-        const log = last && line.includes("%") && strip(last) === strip(line)
-          ? [...j.log.slice(0, -1), line] : [...j.log, line];
-        return { ...j, running: true, log: log.slice(-20) };
-      }));
-    const onDone = addEventListener<[JobStatus]>("amethyst_done", (s) => {
-      setJob((j) => ({ ...j, ...s, log: j.log }));
-      if (s.ok) refresh(); // pick up new deploy state
-    });
-    return () => {
-      removeEventListener("amethyst_log", onLog);
-      removeEventListener("amethyst_done", onDone);
-    };
   }, []);
 
-  useEffect(() => { selection = { game, profile }; }, [game, profile]);
+  useEffect(() => {
+    selection.game = game;
+    selection.profile = profile;
+  }, [game, profile]);
 
   const current = data?.games.find((g) => g.name === game);
   const appId = current ? resolveAppId(current) : null;
@@ -136,14 +79,9 @@ function Content() {
   const run = async (action: "deploy" | "restore", launch = false) => {
     if (!current) return;
     if (action === "deploy" && !profile) return;
-    const key = current.game_id || current.name;
-    pendingLaunch = launch && appId ? appId : null;
     setJob({ action, running: true, log: [] });
-    const r = await startJob(action, key, profile ?? "");
-    if (!r.ok) {
-      pendingLaunch = null;
-      setJob({ running: false, ok: false, log: [r.error ?? "failed"] });
-    }
+    const err = await startGameJob(action, current, profile ?? "", launch ? appId : null);
+    if (err) setJob({ running: false, ok: false, log: [err] });
   };
 
   const manage = async (action: "install" | "update") => {
@@ -218,10 +156,17 @@ function Content() {
       <PanelSection title="Amethyst">
         <PanelSectionRow>
           <div style={{ fontSize: 13 }}>
-            Amethyst is installed, but no games are set up yet. Open it once in Desktop Mode
-            to point it at a game, log in to Nexus and create a profile.
+            Amethyst is installed, but no games are set up yet.
+            {data.kind === "flatpak"
+              ? " Open Amethyst to set up a game Steam has installed."
+              : " Open it once in Desktop Mode to point it at a game and create a profile."}
           </div>
         </PanelSectionRow>
+        {data.kind === "flatpak" && (
+          <PanelSectionRow>
+            <ButtonItem layout="below" onClick={openFullUI}>Open Amethyst</ButtonItem>
+          </PanelSectionRow>
+        )}
         <PanelSectionRow>
           <ButtonItem layout="below" onClick={refresh} disabled={loading}>Refresh</ButtonItem>
         </PanelSectionRow>
@@ -265,6 +210,13 @@ function Content() {
       </PanelSection>
 
       <PanelSection title="Actions">
+        {data?.kind === "flatpak" && (
+          <PanelSectionRow>
+            <ButtonItem layout="below" onClick={openFullUI}>
+              Open Amethyst (mods, plugins, setup)
+            </ButtonItem>
+          </PanelSectionRow>
+        )}
         {appId && (
           <PanelSectionRow>
             <ButtonItem layout="below" disabled={busy || !profile} onClick={() => run("deploy", true)}>
@@ -302,6 +254,8 @@ function Content() {
 }
 
 export default definePlugin(() => {
+  routerHook.addRoute("/amethyst", AmethystPage, { exact: true });
+
   // Global listener: finish-up work happens even if the QAM panel is closed.
   const done = addEventListener<[JobStatus]>("amethyst_done", (s) => {
     const label = s.action === "install" ? "Amethyst installed"
@@ -312,8 +266,8 @@ export default definePlugin(() => {
       body: s.ok ? label : `${label} - open the plugin for the log`,
     });
     if (s.ok) cache = null; // deploy state changed; rescan next open
-    if (s.ok && pendingLaunch) runApp(pendingLaunch);
-    pendingLaunch = null;
+    const launch = takePendingLaunch();
+    if (s.ok && launch) runApp(launch);
   });
 
   return {
@@ -323,6 +277,7 @@ export default definePlugin(() => {
     icon: <FaGem />,
     onDismount() {
       removeEventListener("amethyst_done", done);
+      routerHook.removeRoute("/amethyst");
     },
   };
 });

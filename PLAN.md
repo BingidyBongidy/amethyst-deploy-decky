@@ -53,6 +53,19 @@ Brad to confirm:
       decides the free-account install flow in phase 2.
 
 ### 2. Phase 1 UI (frontend, `src/`)
+**Built, not yet run on a device.** `src/AmethystPage.tsx` (route + tabs),
+`src/ReorderList.tsx` (A toggle / X pick up / D-pad carry / A drop / B cancel),
+`src/shared.tsx` (types, bridge client, job hook, launch helpers). Mods are shown
+in file order (top = highest priority), matching the GUI's default natural sort
+(`gui_qt/modlist_sort.py`). Device checks for this:
+- [ ] "Open Amethyst" in the QAM opens the full-screen page; B goes back.
+- [ ] L1/R1 switch tabs; the list scrolls with the focused row.
+- [ ] Carrying a row with the D-pad keeps focus on it (rows are keyed by
+      position so Steam's own navigation moves focus; see `ReorderList`).
+- [ ] B while carrying cancels and does *not* leave the page.
+- [ ] The profile-name field brings up the on-screen keyboard.
+
+Original spec:
 - Full-screen route (`routerHook.addRoute("/amethyst", ...)`), opened from
   an "Open Amethyst" button in the QAM panel.
 - Header: game and profile pickers, Deploy & Play.

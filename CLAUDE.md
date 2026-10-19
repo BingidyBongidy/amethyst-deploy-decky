@@ -10,7 +10,10 @@ state, next steps and how to test.
 - `defaults/amethyst_bridge.py`: JSON-RPC helper that runs *inside* Amethyst's
   Flatpak Python and imports Amethyst's modules. `defaults/*` ship at the plugin root.
 - `defaults/amethyst_snapshot.py`: one-shot game/profile listing for the QAM panel.
-- `src/index.tsx`: frontend (React, `@decky/ui`, `@decky/api`).
+- `src/index.tsx`: frontend (React, `@decky/ui`, `@decky/api`): QAM panel and route registration.
+- `src/AmethystPage.tsx`: full-screen `/amethyst` page (Mods, Plugins, Setup tabs).
+- `src/ReorderList.tsx`: controller list with toggle and pick-up/carry/drop reordering.
+- `src/shared.tsx`: types, bridge client, job events and launch helpers used by both.
 - `tests/`: bridge smoke test against real Amethyst source plus a fake Steam home.
 
 ## Rules
