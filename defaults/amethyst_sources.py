@@ -194,7 +194,9 @@ class Nexus:
         self._server = server
         threading.Thread(target=server.serve_forever, daemon=True, name="nexus-login").start()
         # Don't leave the page open forever.
-        threading.Timer(15 * 60, lambda: self._server is server and self.stop_login()).start()
+        timer = threading.Timer(15 * 60, lambda: self._server is server and self.stop_login())
+        timer.daemon = True   # must not keep the bridge alive on exit
+        timer.start()
         return {"url": f"http://{ip}:{server.server_address[1]}/{token}"}
 
     def stop_login(self):

@@ -767,4 +767,10 @@ def main():
 
 if __name__ == "__main__":
     _send({"id": None, "result": {"ready": True, "protocol": PROTOCOL}})
-    main()
+    try:
+        main()
+    except BaseException:
+        if os.environ.get("AMETHYST_BRIDGE_DEBUG"):
+            with open(os.environ["AMETHYST_BRIDGE_DEBUG"], "a") as f:
+                traceback.print_exc(file=f)
+        raise
