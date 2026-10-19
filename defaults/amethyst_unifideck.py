@@ -66,7 +66,7 @@ def load_rows() -> list[Row]:
     return rows
 
 
-def _legendary_installed() -> dict:
+def legendary_installed() -> dict:
     try:
         data = json.loads((_config_home() / "legendary" / "installed.json").read_text(encoding="utf-8"))
         return data if isinstance(data, dict) else {}
@@ -87,8 +87,10 @@ def _root_for_exe(row: Row, exe_name: str) -> "Path | None":
     return None
 
 
-def find(exe_names: list[str], app_names: list[str], rows: "list[Row] | None" = None):
-    """(install root, Row) for a game, or None.
+def find(exe_names: list[str], app_names: list[str], rows: "list[Row] | None" = None,
+         legendary: "dict | None" = None):
+    """(install root, Row, matched exe or None) for a game, or None. Pass
+    *rows* / *legendary* when checking many games, to read the files once.
 
     When the handler declares store app names (Amethyst's heroic_app_names:
     Epic appNames and GOG product ids) only those match, like Amethyst's own
@@ -96,24 +98,23 @@ def find(exe_names: list[str], app_names: list[str], rows: "list[Row] | None" = 
     rows = load_rows() if rows is None else rows
     names = {n.lower() for n in app_names if n}
     if names:
-        epic = None
         for row in rows:
             if row.game_id.lower() not in names:
                 continue
             root = row.work_dir
             if row.store == "epic":
-                epic = epic if epic is not None else _legendary_installed()
-                entry = epic.get(row.game_id) or {}
+                legendary = legendary_installed() if legendary is None else legendary
+                entry = legendary.get(row.game_id) or {}
                 if entry.get("install_path"):
                     root = Path(entry["install_path"])
             if root.is_dir():
-                return root, row
+                return root, row, None
         return None
     for row in rows:
         for exe in exe_names:
             root = _root_for_exe(row, exe)
             if root is not None and root.is_dir():
-                return root, row
+                return root, row, exe
     return None
 
 

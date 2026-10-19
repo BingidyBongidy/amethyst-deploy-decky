@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import html
 import http.server
-import re
 import secrets
 import socket
 import threading
@@ -18,7 +17,7 @@ import time
 import urllib.parse
 from pathlib import Path
 
-from amethyst_tasks import Task, TaskError, install_archive_flow
+from amethyst_tasks import Task, TaskError, install_archive_flow, strip_markup
 
 PAGE_SIZE = 20
 
@@ -35,13 +34,6 @@ def ts_community(g) -> str:
         return ""
 
 
-def _strip_markup(text: str, limit=6000) -> str:
-    text = re.sub(r"(?i)<br\s*/?>|\[/?(p|line)\]", "\n", text or "")
-    text = re.sub(r"<[^>]+>|\[/?[a-z*]+(=[^\]]*)?\]", "", text)
-    text = html.unescape(text)
-    return re.sub(r"\n{3,}", "\n\n", text).strip()[:limit]
-
-
 # ---------------------------------------------------------------- Nexus
 
 
@@ -53,6 +45,7 @@ class Nexus:
         self._user = None
         self._checked = 0.0
         self._server = None
+        self._mod_cache: dict = {}   # (domain, mod_id) -> (time, info, files)
 
     # ----- credentials
 
@@ -92,8 +85,11 @@ class Nexus:
             except Exception as e:
                 self._api = self._user = None
                 return {"logged_in": False, "error": f"Nexus rejected the saved login: {e}"}
-        u = self._user
-        return {"logged_in": True, "name": u.name, "premium": bool(u.is_premium)}
+        return self._info(self._user)
+
+    @staticmethod
+    def _info(user) -> dict:
+        return {"logged_in": True, "name": user.name, "premium": bool(user.is_premium)}
 
     def use_key(self, key: str) -> dict:
         key = (key or "").strip()
@@ -107,7 +103,7 @@ class Nexus:
             raise TaskError(f"Nexus didn't accept that key: {e}")
         save_api_key(key)
         self._api, self._user, self._checked = api, user, time.time()
-        info = {"logged_in": True, "name": user.name, "premium": bool(user.is_premium)}
+        info = self._info(user)
         self.emit("nexus_login", info)
         return info
 
@@ -210,7 +206,7 @@ class Nexus:
 
     @staticmethod
     def _card(m) -> dict:
-        return {"id": m.mod_id, "name": m.name, "summary": _strip_markup(m.summary, 300),
+        return {"id": m.mod_id, "name": m.name, "summary": strip_markup(m.summary, 300),
                 "picture": m.picture_url or "", "author": m.author or m.uploaded_by,
                 "version": m.version, "endorsements": m.endorsement_count,
                 "downloads": m.downloads_total, "category": m.category_name,
@@ -233,18 +229,30 @@ class Nexus:
 
     _FILE_ORDER = {"MAIN": 0, "UPDATE": 1, "OPTIONAL": 2, "MISCELLANEOUS": 3}
 
+    def _mod_data(self, api, domain: str, mod_id: int):
+        """get_mod + get_mod_files, kept for 5 minutes: the details view loads
+        them and an install from it needs them again (Nexus rate-limits)."""
+        key = (domain, int(mod_id))
+        hit = self._mod_cache.get(key)
+        if hit and time.time() - hit[0] < 300:
+            return hit[1], hit[2]
+        info = api.get_mod(domain, int(mod_id))
+        files = api.get_mod_files(domain, int(mod_id)).files
+        self._mod_cache = {k: v for k, v in self._mod_cache.items() if time.time() - v[0] < 300}
+        self._mod_cache[key] = (time.time(), info, files)
+        return info, files
+
     def mod(self, g, mod_id: int) -> dict:
         api, domain = self.require(), nexus_domain(g)
-        info = api.get_mod(domain, int(mod_id))
-        files = [f for f in api.get_mod_files(domain, int(mod_id)).files
-                 if f.category_name in self._FILE_ORDER]
+        info, all_files = self._mod_data(api, domain, mod_id)
+        files = [f for f in all_files if f.category_name in self._FILE_ORDER]
         files.sort(key=lambda f: (self._FILE_ORDER[f.category_name], -f.uploaded_timestamp))
         card = self._card(info)
-        card["description"] = _strip_markup(info.description)
+        card["description"] = strip_markup(info.description)
         card["files"] = [{"id": f.file_id, "name": f.name, "version": f.version,
                           "category": f.category_name, "file_name": f.file_name,
                           "size": f.size_in_bytes or f.size_kb * 1024,
-                          "description": _strip_markup(f.description, 400),
+                          "description": strip_markup(f.description, 400),
                           "primary": f.is_primary} for f in files]
         st = self.status()
         card["premium"] = bool(st.get("premium"))
@@ -263,9 +271,8 @@ class Nexus:
         from Nexus.nexus_meta import build_meta_from_download
         from Utils.config_paths import get_download_cache_dir_for_game
         task.set_step("Looking up the file")
-        info = api.get_mod(domain, int(mod_id))
-        file = next((f for f in api.get_mod_files(domain, int(mod_id)).files
-                     if f.file_id == int(file_id)), None)
+        info, files = self._mod_data(api, domain, mod_id)
+        file = next((f for f in files if f.file_id == int(file_id)), None)
         if file is None:
             raise TaskError("That file is no longer on Nexus.")
         task.title = info.name

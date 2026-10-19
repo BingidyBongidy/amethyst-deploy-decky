@@ -10,6 +10,7 @@ named next to each step.
 from __future__ import annotations
 
 import base64
+import html
 import io
 import re
 import threading
@@ -96,6 +97,10 @@ class Task:
         self.emit()
         return self._answer
 
+    def request_cancel(self):
+        self.cancel.set()
+        self._answered.set()   # wake the task if it's parked on a choice
+
     def answer(self, value):
         if self.state != "choice":
             raise TaskError("This task isn't waiting for an answer.")
@@ -141,8 +146,6 @@ class TaskManager:
             raise TaskError("That task has finished or doesn't exist.")
         return t
 
-    def active(self) -> list[Task]:
-        return [t for t in self.tasks.values() if t.state not in TERMINAL]
 
 
 # ---------------------------------------------------------------- install
@@ -232,10 +235,12 @@ def install_archive_flow(task: Task, g, profile_dir: Path, archive: Path, *,
 # ---------------------------------------------------------------- FOMOD view
 
 
-def _plain(text: str) -> str:
-    text = re.sub(r"<br\s*/?>", "\n", text or "", flags=re.I)
-    text = re.sub(r"<[^>]+>", "", text)
-    return text.strip()[:4000]
+def strip_markup(text: str, limit=6000) -> str:
+    """HTML/BBCode to plain text, for Nexus descriptions and FOMOD options."""
+    text = re.sub(r"(?i)<br\s*/?>|\[/?(p|line)\]", "\n", text or "")
+    text = re.sub(r"<[^>]+>|\[/?[a-z*]+(=[^\]]*)?\]", "", text)
+    text = html.unescape(text)
+    return re.sub(r"\n{3,}", "\n\n", text).strip()[:limit]
 
 
 def fomod_view(task: Task) -> dict:
@@ -250,17 +255,19 @@ def fomod_view(task: Task) -> dict:
         groups = []
         for gi, group in enumerate(step.groups):
             states = session.states.get((si, gi), {})
-            groups.append({
-                "name": group.display_name or group.name, "type": group.group_type,
-                "options": [{
-                    "name": p.name, "description": _plain(p.description),
-                    "image": bool(p.image_path),
-                    "selected": p.name in sel.get(group.name, []),
-                    "type": states[p.name].plugin_type if p.name in states else "Optional",
-                    "locked": bool(states[p.name].locked) if p.name in states else False,
-                    "missing": bool(states[p.name].missing_dependency) if p.name in states else False,
-                    "previous": bool(states[p.name].previously_selected) if p.name in states else False,
-                } for p in group.plugins]})
+            chosen = sel.get(group.name, [])
+            options = []
+            for p in group.plugins:
+                st = states.get(p.name)
+                options.append({
+                    "name": p.name, "description": strip_markup(p.description, 4000),
+                    "image": bool(p.image_path), "selected": p.name in chosen,
+                    "type": st.plugin_type if st else "Optional",
+                    "locked": bool(st and st.locked),
+                    "missing": bool(st and st.missing_dependency),
+                    "previous": bool(st and st.previously_selected)})
+            groups.append({"name": group.display_name or group.name,
+                           "type": group.group_type, "options": options})
         steps.append({"index": si, "name": step.name, "groups": groups})
     return {"title": cfg.name or task.title, "steps": steps,
             "errors": [{"step": si, "message": msg} for si, msg in session.errors]}

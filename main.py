@@ -78,7 +78,6 @@ BRIDGE_METHODS = {
     "nexus_set_key": 60, "nexus_logout": 20, "nexus_mods": 60, "nexus_mod": 60,
     "nexus_install": 120, "ts_mods": 60, "ts_install": 120,
 }
-TERMINAL = ("done", "error", "cancelled")
 
 
 class BridgeClient:
@@ -97,7 +96,6 @@ class BridgeClient:
         self.write_lock = asyncio.Lock()
         self.next_id = 0
         self.pending: dict = {}
-        self.active_tasks: set = set()
 
     async def _start(self):
         script = Path(decky.DECKY_PLUGIN_DIR) / "amethyst_bridge.py"
@@ -113,7 +111,6 @@ class BridgeClient:
             await self.stop()
             raise RuntimeError("Amethyst's helper exited on startup - check the Decky log.")
         decky.logger.info("bridge ready: %s", hello.decode().strip())
-        self.active_tasks.clear()
         loop.create_task(self._read(self.proc))
 
     @staticmethod
@@ -133,13 +130,7 @@ class BridgeClient:
                     decky.logger.warning("bridge sent junk: %r", raw[:200])
                     continue
                 if msg.get("event"):
-                    data = msg.get("data")
-                    if msg["event"] == "task" and isinstance(data, dict):
-                        if data.get("state") in TERMINAL:
-                            self.active_tasks.discard(data.get("id"))
-                        else:
-                            self.active_tasks.add(data.get("id"))
-                    await decky.emit("amethyst_event", msg["event"], data)
+                    await decky.emit("amethyst_event", msg["event"], msg.get("data"))
                     continue
                 fut = self.pending.pop(msg.get("id"), None)
                 if fut is not None and not fut.done():
@@ -149,12 +140,18 @@ class BridgeClient:
                 if not fut.done():
                     fut.set_exception(RuntimeError("Amethyst's helper stopped unexpectedly."))
             self.pending.clear()
-            if self.active_tasks:
-                self.active_tasks.clear()
+            if self.proc is proc:   # died on its own, not stop()
                 await decky.emit("amethyst_event", "bridge_stopped", {})
 
-    def busy(self) -> bool:
-        return bool(self.active_tasks)
+    async def busy(self) -> bool:
+        """True while the helper has an install or download in progress."""
+        if self.proc is None or self.proc.returncode is not None:
+            return False
+        try:
+            resp = await self.call("tasks", {}, 10)
+        except Exception:
+            return False
+        return any(t.get("state") in ("working", "choice") for t in resp.get("result") or [])
 
     async def stop(self):
         proc, self.proc = self.proc, None
@@ -314,7 +311,7 @@ class Plugin:
         else:
             return {"ok": False, "error": f"unknown action {action}"}
         if self.bridge is not None:
-            if self.bridge.busy():
+            if await self.bridge.busy():
                 return {"ok": False, "error": "Wait for mod installs to finish first."}
             # Deploy/restore/update run as separate processes on the same files;
             # don't leave the helper holding them open. It restarts on demand.

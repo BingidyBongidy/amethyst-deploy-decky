@@ -60,12 +60,13 @@ def emit(event: str, data):
 # state hold this too so the two never interleave.
 GAME_LOCK = threading.RLock()
 
-# RPCs that don't read or write game state, so they don't wait on GAME_LOCK
-# (a long install must not stall the UI's polling and browsing).
-UNLOCKED = {"ping", "recent_log", "tasks", "task_answer", "task_cancel",
-            "fomod_view", "fomod_toggle", "fomod_image", "local_archives",
-            "nexus_status", "nexus_login_start", "nexus_login_stop", "nexus_set_key",
-            "nexus_logout", "nexus_mods", "nexus_mod", "ts_mods"}
+
+
+def unlocked(fn):
+    """Mark an RPC that doesn't touch game state: it skips GAME_LOCK and runs
+    alongside others, so a long install never stalls polling, browsing or cancel."""
+    fn.unlocked = True
+    return fn
 
 
 class BridgeError(TaskError):
@@ -126,12 +127,8 @@ class Bridge:
                 "active_profile": "",
                 "has_plugins": bool(getattr(g, "plugin_extensions", None)),
                 "loot": bool(getattr(g, "loot_sort_enabled", False)),
-                "nexus_domain": "", "ts_community": "", "shortcut_appid": ""}
-        try:
-            info["nexus_domain"] = nexus_domain(g)
-            info["ts_community"] = ts_community(g)
-        except Exception:
-            pass
+                "nexus_domain": nexus_domain(g), "ts_community": ts_community(g),
+                "shortcut_appid": ""}
         try:
             info["steam_id"] = str(g.effective_steam_id() or g.steam_id or "")
         except Exception:
@@ -155,6 +152,7 @@ class Bridge:
 
     # ---------- RPC: games & setup ----------
 
+    @unlocked
     def ping(self):
         return {"protocol": PROTOCOL}
 
@@ -177,13 +175,15 @@ class Bridge:
             self.games = discover_games()
         index = InstalledIndex(log=self.log)
         uni_rows = unifideck.load_rows()
+        legendary = unifideck.legendary_installed() if uni_rows else {}
         found = []
         for name, g in sorted(self.games.items()):
             try:
                 if g.is_configured():
                     continue
                 launchers = list(index.game_launchers(g))
-                if uni_rows and unifideck.find(self._exe_names(g), self._heroic_app_names(g), uni_rows):
+                if uni_rows and unifideck.find(self._exe_names(g), self._heroic_app_names(g),
+                                               uni_rows, legendary):
                     launchers.append("unifideck")
             except Exception as e:
                 self.log(f"detect {name}: {e}")
@@ -222,104 +222,94 @@ class Bridge:
         return bool(exe) and Path(str(exe)).suffix.casefold() not in {
             ".exe", ".bat", ".cmd", ".com", ".msi"}
 
-    def _install_candidates(self, g) -> list[dict]:
-        """One candidate per launcher the game is installed through, best first.
+    def _install_candidates(self, g):
+        """Yield one candidate per launcher the game is installed through, best
+        first; callers take the first (the GUI auto-applies candidates[0]).
 
         Mirror of ConfigureGameView._game_scan_worker (gui_qt/configure_game_view.py):
         same order (Heroic, Lutris, Faugus, Bottles, non-Steam shortcut, Steam),
-        then a standalone install if nothing else matched."""
-        out: list[dict] = []
-
-        def add(source, path, prefix, launcher_id, exe=None):
-            out.append({"source": source, "path": Path(path),
-                        "prefix": Path(prefix) if prefix else None, "id": launcher_id,
-                        "prefix_mode": ("native" if self._is_native_exe(exe)
-                                        else "resolved" if prefix else "detect")})
+        then a standalone install if nothing else matched. Unifideck (not in the
+        GUI) slots in before shortcuts, since its installs are shortcuts too."""
+        def cand(source, path, prefix, launcher_id, exe=None):
+            return {"source": source, "path": Path(path),
+                    "prefix": Path(prefix) if prefix else None, "id": launcher_id,
+                    "prefix_mode": ("native" if self._is_native_exe(exe)
+                                    else "resolved" if prefix else "detect")}
 
         exe_names = self._exe_names(g)
+
+        def first(find):
+            """(info, exe) for the first exe name *find* matches."""
+            for exe in exe_names:
+                info = find(exe)
+                if info:
+                    return info, exe
+            return None, None
+
+        found = False
         try:
             from Utils.launchers.heroic import (
                 find_heroic_game_info_by_app_names, find_heroic_game_info_by_exe)
+            from Utils.launchers.lutris import find_lutris_game_info_by_exe
+            from Utils.launchers.faugus import find_faugus_game_info_by_exe
+            from Utils.launchers.bottles import find_bottles_game_info_by_exes
+            from Utils.launchers.steam_shortcuts import find_shortcut_game_info_by_exe
             heroic = self._heroic_app_names(g)
             if heroic:
                 # Declared app names are authoritative; the GUI skips the exe scan.
-                info = find_heroic_game_info_by_app_names(heroic)
-                if info:
-                    add("heroic", *info)
+                info, exe = find_heroic_game_info_by_app_names(heroic), None
             else:
-                for exe in exe_names:
-                    info = find_heroic_game_info_by_exe(exe)
-                    if info:
-                        add("heroic", *info, exe)
-                        break
-            from Utils.launchers.lutris import find_lutris_game_info_by_exe
-            for exe in exe_names:
-                info = find_lutris_game_info_by_exe(exe)
+                info, exe = first(find_heroic_game_info_by_exe)
+            if info:
+                found = True
+                yield cand("heroic", *info, exe)
+            for source, finder in (("lutris", find_lutris_game_info_by_exe),
+                                   ("faugus", find_faugus_game_info_by_exe)):
+                info, exe = first(finder)
                 if info:
-                    add("lutris", *info, exe)
-                    break
-            from Utils.launchers.faugus import find_faugus_game_info_by_exe
-            for exe in exe_names:
-                info = find_faugus_game_info_by_exe(exe)
-                if info:
-                    add("faugus", *info, exe)
-                    break
-            from Utils.launchers.bottles import find_bottles_game_info_by_exes
+                    found = True
+                    yield cand(source, *info, exe)
             info = find_bottles_game_info_by_exes(exe_names)
             if info:
-                add("bottles", *info)
-            # Not in the GUI: Unifideck installs (a shortcut Amethyst can't match).
-            hit = unifideck.find(exe_names, self._heroic_app_names(g))
+                found = True
+                yield cand("bottles", *info)
+            hit = unifideck.find(exe_names, heroic)
             if hit:
-                root, row = hit
-                add("unifideck", root, unifideck.prefix_for(row), row.app_id,
-                    next((e for e in exe_names if unifideck._root_for_exe(row, e)), None))
-            from Utils.launchers.steam_shortcuts import find_shortcut_game_info_by_exe
-            for exe in exe_names:
-                info = find_shortcut_game_info_by_exe(exe)
-                if info:
-                    add("shortcut", *info, exe)
-                    break
+                root, row, exe = hit
+                found = True
+                yield cand("unifideck", root, unifideck.prefix_for(row), row.app_id, exe)
+            info, exe = first(find_shortcut_game_info_by_exe)
+            if info:
+                found = True
+                yield cand("shortcut", *info, exe)
             sid = str(getattr(g, "steam_id", "") or "")
             if sid:
                 from Utils.launchers.steam import (
                     find_steam_libraries, find_game_by_steam_id, find_game_in_libraries)
                 libs = find_steam_libraries()
-                found = matched = None
-                for exe in exe_names:
-                    found = find_game_by_steam_id(libs, sid, exe)
-                    if found:
-                        matched = exe
-                        break
-                if not found:
-                    for exe in exe_names:
-                        found = find_game_in_libraries(libs, exe)
-                        if found:
-                            matched = exe
-                            break
-                if found:
-                    add("steam", found, None, None, matched)
+                path, exe = first(lambda e: find_game_by_steam_id(libs, sid, e))
+                if not path:
+                    path, exe = first(lambda e: find_game_in_libraries(libs, e))
+                if path:
+                    found = True
+                    yield cand("steam", path, None, None, exe)
         except Exception as e:
             traceback.print_exc()
             self.log(f"install scan failed: {e}")
-        if not out:
+        if not found:
             try:
                 detect = getattr(g, "detect_standalone_install", None)
-                found = detect() if callable(detect) else None
-                if found is not None:
-                    add("standalone", found, None, None, getattr(g, "exe_name", None))
+                path = detect() if callable(detect) else None
+                if path is not None:
+                    yield cand("standalone", path, None, None, getattr(g, "exe_name", None))
             except Exception as e:
                 self.log(f"standalone detection failed: {e}")
-        return out
 
     def _find_prefix(self, g, game_path, source, launcher_id):
         """Mirror of ConfigureGameView._prefix_scan_worker: look for the prefix
         through the launcher the install came from (any launcher if None)."""
         exe_names = [e for e in [getattr(g, "exe_name", None)]
                      + list(getattr(g, "exe_name_alts", []) or []) if e]
-        if source == "unifideck":
-            hit = unifideck.find(self._exe_names(g), self._heroic_app_names(g))
-            return unifideck.prefix_for(hit[1]) if hit else None
         try:
             from Utils.launchers.steam import find_prefix
             from Utils.launchers.heroic import find_heroic_prefix
@@ -373,11 +363,10 @@ class Bridge:
             c = {"source": "manual", "path": Path(path), "prefix": None,
                  "id": None, "prefix_mode": "detect"}
         else:
-            cands = self._install_candidates(g)
-            if not cands:
+            c = next(self._install_candidates(g), None)
+            if c is None:
                 raise BridgeError(f"Couldn't find {g.name} in Steam, Heroic, Unifideck, Lutris, "
                                   "Faugus, Bottles or your non-Steam shortcuts.")
-            c = cands[0]  # the GUI auto-applies the first candidate
         target = c["path"]
         if not target.is_dir():
             raise BridgeError(f"Game folder not found: {target}")
@@ -640,67 +629,69 @@ class Bridge:
         return {"moved": moved, "warnings": list(getattr(result, "warnings", []) or []),
                 "plugins": plugins, "log": lines[-20:]}
 
+    @unlocked
     def recent_log(self):
         return self._log[-50:]
 
     # ---------- RPC: tasks (install, download) ----------
 
+    @unlocked
     def tasks(self):
         return [t.public() for t in self.taskmgr.tasks.values()]
 
+    @unlocked
     def task_answer(self, task_id: str, value=None):
         self.taskmgr.get(task_id).answer(value)
         return {}
 
+    @unlocked
     def task_cancel(self, task_id: str):
         t = self.taskmgr.get(task_id)
-        t.cancel.set()
-        t._answered.set()   # wake a task parked on a choice
+        t.request_cancel()
         return t.public()
 
+    @unlocked
     def fomod_view(self, task_id: str):
         return fomod_view(self.taskmgr.get(task_id))
 
+    @unlocked
     def fomod_toggle(self, task_id: str, step: int, group: int, name: str):
         return fomod_toggle(self.taskmgr.get(task_id), step, group, name)
 
+    @unlocked
     def fomod_image(self, task_id: str, step: int, group: int, name: str):
         return fomod_image(self.taskmgr.get(task_id), step, group, name)
 
     def _task_target(self, game: str, profile: str):
         g = self._configured(game)
-        pdir = self._profile_dir(g, profile)
-        return g, pdir
+        return g, self._profile_dir(g, profile)
 
     # ---------- RPC: install from Downloads ----------
 
     @staticmethod
     def _archive_dirs() -> list[Path]:
-        """The folders Amethyst's manual-download watcher looks in
-        (Nexus/manual_download_watch.py): Downloads plus extra locations."""
-        dirs = []
-        try:
-            from Nexus.nexus_download import _get_downloads_dir
-            from Utils.downloads.locations import (
-                is_default_downloads_disabled, load_extra_download_locations)
-            if not is_default_downloads_disabled():
-                dirs.append(Path(_get_downloads_dir()))
-            dirs += [Path(p) for p in load_extra_download_locations()]
-        except Exception as e:
-            print(f"download dirs: {e}", file=sys.stderr)
-            dirs.append(Path.home() / "Downloads")
-        return [d for d in dict.fromkeys(dirs) if d.is_dir()]
+        """Amethyst's download locations: Downloads (unless disabled) plus the
+        user's extra folders (Utils/downloads/locations.py)."""
+        from Utils.downloads.locations import get_effective_download_locations
+        return [Path(d) for d in get_effective_download_locations() if Path(d).is_dir()]
 
+    @unlocked
     def local_archives(self):
+        """Archives ready to install, newest first. Like Amethyst's Downloads
+        scan (Utils/downloads/core.py scan_download_dirs), 0-byte files are
+        in-progress browser downloads and are skipped."""
         from Utils.downloads.core import is_archive
         out = []
         for d in self._archive_dirs():
             try:
-                for f in d.iterdir():
-                    if f.is_file() and is_archive(f.name):
-                        st = f.stat()
-                        out.append({"path": str(f), "name": f.name, "folder": str(d),
-                                    "size": st.st_size, "modified": int(st.st_mtime)})
+                with os.scandir(d) as entries:
+                    for e in entries:
+                        if not (e.is_file() and is_archive(e.name)):
+                            continue
+                        st = e.stat()
+                        if st.st_size:
+                            out.append({"path": e.path, "name": e.name, "folder": str(d),
+                                        "size": st.st_size, "modified": int(st.st_mtime)})
             except OSError as e:
                 self.log(f"list {d}: {e}")
         out.sort(key=lambda a: -a["modified"])
@@ -708,7 +699,7 @@ class Bridge:
 
     def install_archive(self, game: str, profile: str, path: str):
         archive = Path(path)
-        if not any(archive.parent == d for d in self._archive_dirs()) or not archive.is_file():
+        if archive.parent not in self._archive_dirs() or not archive.is_file():
             raise BridgeError("That file isn't in your Downloads folder any more.")
         g, pdir = self._task_target(game, profile)
         task = Task(self.taskmgr, "archive", archive.name, game, profile)
@@ -717,24 +708,31 @@ class Bridge:
 
     # ---------- RPC: Nexus ----------
 
+    @unlocked
     def nexus_status(self, refresh: bool = False):
         return self.nexus.status(refresh)
 
+    @unlocked
     def nexus_login_start(self):
         return self.nexus.start_login()
 
+    @unlocked
     def nexus_login_stop(self):
         return self.nexus.stop_login()
 
+    @unlocked
     def nexus_set_key(self, key: str):
         return self.nexus.use_key(key)
 
+    @unlocked
     def nexus_logout(self):
         return self.nexus.logout()
 
+    @unlocked
     def nexus_mods(self, game: str, query: str = "", sort: str = "downloads", page: int = 0):
         return self.nexus.mods(self._game(game), query, sort, page)
 
+    @unlocked
     def nexus_mod(self, game: str, mod_id: int):
         return self.nexus.mod(self._game(game), mod_id)
 
@@ -746,6 +744,7 @@ class Bridge:
 
     # ---------- RPC: Thunderstore ----------
 
+    @unlocked
     def ts_mods(self, game: str, query: str = "", ordering: str = "most-downloaded", page: int = 0):
         return self.thunderstore.mods(self._game(game), query, ordering, page)
 
@@ -756,32 +755,46 @@ class Bridge:
             t, g, pdir, namespace, name, GAME_LOCK))
 
 
+def _dispatch(fn, rid, params):
+    try:
+        if getattr(fn, "unlocked", False):
+            result = fn(**params)
+        else:
+            with GAME_LOCK:
+                result = fn(**params)
+        resp = {"id": rid, "result": result}
+    except TaskError as e:
+        resp = {"id": rid, "error": str(e)}
+    except Exception as e:
+        traceback.print_exc()
+        resp = {"id": rid, "error": f"{type(e).__name__}: {e}"}
+    _send(resp)
+
+
 def main():
+    from concurrent.futures import ThreadPoolExecutor
     bridge = Bridge()
+    # Game-state RPCs run one at a time, in order; @unlocked ones run alongside
+    # them. Replies carry their request id, so the plugin matches them up.
+    locked = ThreadPoolExecutor(1, thread_name_prefix="rpc-locked")
+    free = ThreadPoolExecutor(4, thread_name_prefix="rpc")
     for line in sys.stdin:
         line = line.strip()
         if not line:
             continue
-        rid = None
         try:
             req = json.loads(line)
-            rid = req.get("id")
-            method = req.get("method", "")
-            if method.startswith("_") or not callable(getattr(bridge, method, None)):
-                raise BridgeError(f"Unknown method {method}")
-            fn = getattr(bridge, method)
-            if method in UNLOCKED:
-                result = fn(**(req.get("params") or {}))
-            else:
-                with GAME_LOCK:
-                    result = fn(**(req.get("params") or {}))
-            resp = {"id": rid, "result": result}
-        except TaskError as e:
-            resp = {"id": rid, "error": str(e)}
-        except Exception as e:
-            traceback.print_exc()
-            resp = {"id": rid, "error": f"{type(e).__name__}: {e}"}
-        _send(resp)
+        except ValueError:
+            continue
+        rid, method = req.get("id"), req.get("method", "")
+        fn = None if method.startswith("_") else getattr(bridge, method, None)
+        if not callable(fn):
+            _send({"id": rid, "error": f"Unknown method {method}"})
+            continue
+        pool = free if getattr(fn, "unlocked", False) else locked
+        pool.submit(_dispatch, fn, rid, req.get("params") or {})
+    locked.shutdown()
+    free.shutdown()
 
 
 if __name__ == "__main__":
