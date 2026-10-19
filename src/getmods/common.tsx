@@ -10,19 +10,6 @@ export function compact(n: number | undefined | null): string {
   return String(Math.round(v));
 }
 
-/** Bytes -> "4.2 MB". */
-export function size(bytes: number | undefined | null): string {
-  let v = Number(bytes) || 0;
-  if (v <= 0) return "";
-  const units = ["B", "KB", "MB", "GB", "TB"];
-  let i = 0;
-  while (v >= 1024 && i < units.length - 1) {
-    v /= 1024;
-    i++;
-  }
-  return `${i === 0 ? v : v >= 100 ? Math.round(v) : v.toFixed(1).replace(/\.0$/, "")} ${units[i]}`;
-}
-
 /** "2024-05-01T12:00:00Z" -> "2024-05-01"; anything unparseable is returned as is. */
 export const day = (s: string) => (s && /^\d{4}-\d\d-\d\d/.test(s) ? s.slice(0, 10) : s || "");
 
@@ -48,37 +35,7 @@ export const TS_SORTS = [
   { data: "newest", label: "Newest" },
 ];
 
-/** Scroll a newly focused element into view (the tab's scroll panel doesn't always follow). */
-export const scrollOnFocus = (e: { currentTarget: EventTarget }) =>
-  (e.currentTarget as HTMLElement).scrollIntoView?.({ block: "nearest" });
-
 /** Hide a thumbnail that failed to load, keeping its box so rows stay aligned. */
 export const hideBroken = (e: { currentTarget: HTMLImageElement }) => {
   e.currentTarget.style.visibility = "hidden";
 };
-
-/**
- * Split plain text into focusable chunks so the D-pad can step through (and
- * scroll) a long description. Paragraphs over ~700 chars are cut at sentence ends.
- */
-export function chunks(text: string): string[] {
-  const out: string[] = [];
-  for (const para of (text || "").split(/\n\s*\n/)) {
-    const p = para.trim();
-    if (!p) continue;
-    if (p.length <= 700) {
-      out.push(p);
-      continue;
-    }
-    let cur = "";
-    for (const s of p.match(/[^.!?\n]+[.!?]*\s*|\n/g) ?? [p]) {
-      if (cur.length + s.length > 700 && cur) {
-        out.push(cur.trim());
-        cur = "";
-      }
-      cur += s;
-    }
-    if (cur.trim()) out.push(cur.trim());
-  }
-  return out;
-}

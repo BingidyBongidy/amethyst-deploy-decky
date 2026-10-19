@@ -1,5 +1,6 @@
 import { Focusable, GamepadEvent } from "@decky/ui";
 import { ReactNode, useEffect, useState } from "react";
+import { scrollOnFocus } from "./ui";
 
 type Props<T> = {
   items: T[];
@@ -57,7 +58,7 @@ export function ReorderList<T>(p: Props<T>) {
             className={cls}
             focusClassName="amd-focus"
             onFocus={(e) => {
-              (e.currentTarget as HTMLElement).scrollIntoView?.({ block: "nearest" });
+              scrollOnFocus(e);
               if (grab && !grabbed) setGrab((g) => (g ? moveTo(g, i) : g));
             }}
             onActivate={() => {

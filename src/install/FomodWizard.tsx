@@ -1,7 +1,7 @@
 import { DialogButton, Focusable } from "@decky/ui";
 import { ReactNode, useEffect, useRef, useState } from "react";
 import { FaDotCircle, FaHistory, FaLock, FaRegCircle } from "react-icons/fa";
-import { Check, Loading } from "../ui";
+import { Check, Loading, scrollOnFocus } from "../ui";
 import { FomodGroup, FomodOption, FomodView, bridge, errText, toast } from "../shared";
 import { Buttons, showText } from "./common";
 import type { PromptApi } from "./prompts";
@@ -188,7 +188,7 @@ function OptionRow({ group, opt, busy, onFocus, onToggle, onDetails }: {
       className={`amd-row${fixed ? " amd-dim" : ""}`}
       focusClassName="amd-focus"
       onFocus={(e) => {
-        (e.currentTarget as HTMLElement).scrollIntoView?.({ block: "nearest" });
+        scrollOnFocus(e);
         onFocus();
       }}
       onActivate={() => !busy && onToggle()}

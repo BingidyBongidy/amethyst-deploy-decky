@@ -19,8 +19,6 @@ export type BridgeGame = Game & {
   nexus_domain: string;
   /** Thunderstore community slug ("" when the game isn't on Thunderstore). */
   ts_community: string;
-  /** Non-Steam shortcut (e.g. Unifideck): launch through this, not steam_id. */
-  shortcut_appid: string;
 };
 
 // ---------- background tasks (bridge: defaults/amethyst_tasks.py) ----------
@@ -117,11 +115,21 @@ export async function bridge<T>(method: string, params: Record<string, unknown> 
 }
 
 export const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
-export const toast = (body: string, title = "Amethyst") => toaster.toast({ title, body });
+export const toast = (body: string, title = "Amethyst", onClick?: () => void) =>
+  toaster.toast({ title, body, onClick });
+
+/** Start an install task; the task tray takes it from there. */
+export async function startInstall(method: string, params: Record<string, unknown>, name: string) {
+  try {
+    await bridge<Task>(method, params);
+    toast(`Installing ${name}`);
+  } catch (e) {
+    toast(errText(e));
+  }
+}
 
 declare const SteamClient: any;
 declare const collectionStore: any;
-declare const appStore: any;
 
 // Shared by the QAM panel and the full-screen page; survives either closing.
 export const selection: { game?: string; profile?: string } = {};
@@ -139,14 +147,8 @@ const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
  * friends) when it has one, else Amethyst's Steam app ID, else a name match
  * in the library. Shortcuts launch by game ID, not app ID.
  */
-export function resolveAppId(g: Game & { shortcut_appid?: string }): string | null {
-  if (g.shortcut_appid) {
-    try {
-      const ov = appStore?.GetAppOverviewByAppID?.(Number(g.shortcut_appid));
-      if (ov?.m_gameid) return String(ov.m_gameid);
-    } catch { /* fall through to computing it */ }
-    return ((BigInt(g.shortcut_appid) << 32n) | 0x02000000n).toString();
-  }
+export function launchId(g: Game): string | null {
+  if (g.shortcut_appid) return ((BigInt(g.shortcut_appid) << 32n) | 0x02000000n).toString();
   if (g.steam_id) return g.steam_id;
   try {
     const apps: any[] = collectionStore?.allAppsCollection?.allApps ?? [];
@@ -227,7 +229,10 @@ export function useTasks() {
   }, []);
   useBridgeEvent((event, data) => {
     if (event === "task") {
-      setTasks((ts) => [...ts.filter((t) => t.id !== data.id), data as Task]);
+      // Update in place, append new ids: rows keep their order.
+      setTasks((ts) => ts.some((t) => t.id === data.id)
+        ? ts.map((t) => (t.id === data.id ? data as Task : t))
+        : [...ts, data as Task]);
     } else if (event === "bridge_stopped") {
       setTasks((ts) => ts.map((t) => taskFinished(t) ? t
         : { ...t, state: "error", error: "Amethyst's helper stopped." }));

@@ -1,8 +1,8 @@
 import { ConfirmModal, DialogButton, Focusable, ModalRoot, showModal, ShowModalResult } from "@decky/ui";
 import { ReactNode, useEffect, useRef, useState } from "react";
-import { Check } from "../ui";
+import { ensureStyles, swallowB } from "../ui";
 import { Task, TaskChoice, bridge, errText, toast, useBridgeEvent } from "../shared";
-import { Buttons, ModalStyle, showText, swallowB } from "./common";
+import { Buttons, CheckList, showText, useToggleSet } from "./common";
 import { FomodWizard } from "./FomodWizard";
 
 /** Prompt modals that are open now, by task id (so we never stack two for one task). */
@@ -11,6 +11,7 @@ const openPrompts = new Map<string, ShowModalResult>();
 /** Open the prompt for a task waiting on a choice. No-op if one is already open for it. */
 export function openPrompt(task: Task) {
   if (!task.choice || openPrompts.has(task.id)) return;
+  ensureStyles();
   const r = showModal(<TaskPromptModal task={task} />, undefined, {
     fnOnClose: () => openPrompts.delete(task.id),
   });
@@ -89,7 +90,6 @@ function TaskPromptModal({ task, closeModal }: { task: Task; closeModal?: () => 
   return (
     <ModalRoot closeModal={close} onCancel={api.askCancel} bAllowFullSize={choice.kind === "fomod"}
       bDisableBackgroundDismiss bHideCloseIcon>
-      <ModalStyle />
       {/* B anywhere inside asks to cancel the task instead of just closing. */}
       <Focusable onCancelButton={swallowB(api.askCancel)} onCancelActionDescription="Cancel install">
         {body}
@@ -103,28 +103,13 @@ function TaskPromptModal({ task, closeModal }: { task: Task; closeModal?: () => 
 type Bain = Extract<TaskChoice, { kind: "bain" }>;
 
 function BainPrompt({ api, choice }: { api: PromptApi; choice: Bain }) {
-  const [sel, setSel] = useState<Set<string>>(() => new Set(choice.packages.filter((p) => p.default).map((p) => p.name)));
-  const flip = (n: string) => setSel((s) => {
-    const c = new Set(s);
-    if (c.has(n)) c.delete(n); else c.add(n);
-    return c;
-  });
+  const [sel, flip] = useToggleSet(() => choice.packages.filter((p) => p.default).map((p) => p.name));
   return (
     <div className="amd-modal" style={{ width: "min(760px, calc(100vw - 140px))" }}>
       <h2>Choose packages</h2>
       <div className="amd-sub">{choice.mod} is a BAIN archive. Pick the packages to install; the defaults are checked.</div>
-      <Focusable flow-children="vertical" className="amd-scrollbox" style={{ maxHeight: "calc(100vh - 330px)" }}>
-        {choice.packages.map((p) => (
-          <Focusable key={p.name} className="amd-row" focusClassName="amd-focus"
-            onFocus={(e) => (e.currentTarget as HTMLElement).scrollIntoView?.({ block: "nearest" })}
-            onActivate={() => !api.busy && flip(p.name)}
-            onOKActionDescription={sel.has(p.name) ? "Uncheck" : "Check"}>
-            <Check on={sel.has(p.name)} />
-            <span className="amd-name">{p.label || p.name}</span>
-            {p.default && <span className="amd-tag">default</span>}
-          </Focusable>
-        ))}
-      </Focusable>
+      <CheckList sel={sel} flip={flip} disabled={api.busy}
+        items={choice.packages.map((p) => ({ key: p.name, label: p.label || p.name, tag: p.default && "default" }))} />
       <div className="amd-sub">{sel.size} of {choice.packages.length} selected</div>
       <Buttons>
         {choice.readme.trim() && (
@@ -165,28 +150,16 @@ function ExistsPrompt({ api, choice }: { api: PromptApi; choice: Exists }) {
 type Deps = Extract<TaskChoice, { kind: "deps" }>;
 
 function DepsPrompt({ api, choice }: { api: PromptApi; choice: Deps }) {
-  const [sel, setSel] = useState<Set<string>>(() => new Set(choice.packages.map((p) => p.id)));
-  const flip = (n: string) => setSel((s) => {
-    const c = new Set(s);
-    if (c.has(n)) c.delete(n); else c.add(n);
-    return c;
-  });
+  const [sel, flip] = useToggleSet(() => choice.packages.map((p) => p.id));
   return (
     <div className="amd-modal" style={{ width: "min(760px, calc(100vw - 140px))" }}>
       <h2>{choice.mod} needs these mods</h2>
       <div className="amd-sub">Checked mods are installed too. Uncheck any you already have from elsewhere.</div>
-      <Focusable flow-children="vertical" className="amd-scrollbox" style={{ maxHeight: "calc(100vh - 330px)" }}>
-        {choice.packages.map((p) => (
-          <Focusable key={p.id} className="amd-row" focusClassName="amd-focus"
-            onFocus={(e) => (e.currentTarget as HTMLElement).scrollIntoView?.({ block: "nearest" })}
-            onActivate={() => !api.busy && flip(p.id)}
-            onOKActionDescription={sel.has(p.id) ? "Uncheck" : "Check"}>
-            <Check on={sel.has(p.id)} />
-            <span className="amd-name">{p.label || p.id}</span>
-            <span className="amd-tag">{[p.version && `v${p.version}`, p.author && `by ${p.author}`].filter(Boolean).join(" · ")}</span>
-          </Focusable>
-        ))}
-      </Focusable>
+      <CheckList sel={sel} flip={flip} disabled={api.busy}
+        items={choice.packages.map((p) => ({
+          key: p.id, label: p.label || p.id,
+          tag: [p.version && `v${p.version}`, p.author && `by ${p.author}`].filter(Boolean).join(" · "),
+        }))} />
       <Buttons>
         <DialogButton disabled={api.busy} onClick={api.cancel}>Cancel</DialogButton>
         <DialogButton disabled={api.busy}

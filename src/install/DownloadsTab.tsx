@@ -1,9 +1,8 @@
 import { DialogButton, Focusable } from "@decky/ui";
 import { useState } from "react";
 import { FaFileArchive } from "react-icons/fa";
-import { Loading, Note, useRows } from "../ui";
-import { LocalArchive, TabProps, Task, bridge, errText, toast } from "../shared";
-import { humanSize } from "./common";
+import { Loading, Note, formatSize, scrollOnFocus, useRows } from "../ui";
+import { LocalArchive, TabProps, bridge, startInstall } from "../shared";
 
 const age = (modified: number) => {
   const ms = modified > 1e12 ? modified : modified * 1000;
@@ -18,19 +17,16 @@ const age = (modified: number) => {
 
 /** Archives in ~/Downloads (and Amethyst's extra download folders); A installs one
  * into the current profile as a background task the TaskTray follows. */
-export function DownloadsTab({ game, profile, locked }: TabProps) {
+export function DownloadsTab({ game, profile, locked, reload }: TabProps) {
   const [refresh, setRefresh] = useState(0);
   const [starting, setStarting] = useState<Set<string>>(new Set());
-  const { rows, error } = useRows<LocalArchive>(() => bridge<LocalArchive[]>("local_archives"), [refresh]);
+  const { rows, error } = useRows<LocalArchive>(() => bridge<LocalArchive[]>("local_archives"), [refresh, reload]);
 
   const install = async (a: LocalArchive) => {
     if (locked || !profile || starting.has(a.path)) return;
     setStarting((s) => new Set(s).add(a.path));
     try {
-      await bridge<Task>("install_archive", { game: game.name, profile, path: a.path });
-      toast(`Installing ${a.name}`);
-    } catch (e) {
-      toast(errText(e));
+      await startInstall("install_archive", { game: game.name, profile, path: a.path }, a.name);
     } finally {
       setStarting((s) => {
         const c = new Set(s);
@@ -61,7 +57,7 @@ export function DownloadsTab({ game, profile, locked }: TabProps) {
               key={a.path}
               className={`amd-row${canInstall ? "" : " amd-dim"}`}
               focusClassName="amd-focus"
-              onFocus={(e) => (e.currentTarget as HTMLElement).scrollIntoView?.({ block: "nearest" })}
+              onFocus={scrollOnFocus}
               onActivate={() => install(a)}
               onOKActionDescription={canInstall && !busy ? `Install into ${profile}` : undefined}
             >
@@ -69,7 +65,7 @@ export function DownloadsTab({ game, profile, locked }: TabProps) {
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div className="amd-name">{a.name}</div>
                 <div className="amd-sub" style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                  {humanSize(a.size)} · {age(a.modified)} · {a.folder}
+                  {[formatSize(a.size), age(a.modified), a.folder].filter(Boolean).join(" · ")}
                 </div>
               </div>
               {busy && <span className="amd-tag">Starting…</span>}

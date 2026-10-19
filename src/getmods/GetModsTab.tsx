@@ -1,20 +1,16 @@
 import { ConfirmModal, DialogButton, Dropdown, Focusable, showModal, TextField } from "@decky/ui";
-import { useEffect, useRef, useState } from "react";
+import { ReactNode, memo, useCallback, useEffect, useRef, useState } from "react";
 import { FaDownload, FaStar, FaThumbsUp } from "react-icons/fa";
-import { Loading, Note } from "../ui";
-import { NexusCard, NexusStatus, TabProps, TsCard, bridge, errText, toast } from "../shared";
-import {
-  Item, NEXUS_SORTS, Source, TS_SORTS, compact, hideBroken, itemName, scrollOnFocus,
-} from "./common";
-import { Details, startInstall } from "./Details";
+import { Loading, Note, scrollOnFocus } from "../ui";
+import { NexusCard, NexusStatus, TabProps, TsCard, bridge, errText, startInstall, toast } from "../shared";
+import { Item, NEXUS_SORTS, Source, TS_SORTS, compact, hideBroken, itemName } from "./common";
+import { Details } from "./Details";
 import { NexusLogin } from "./NexusLogin";
 
 // ---------- module-level memory (survives tab switches) ----------
 
 /** Last source picked, per game. */
 const sourceByGame = new Map<string, Source>();
-/** Nexus account status, shared by every game (one account). */
-let nexusCache: NexusStatus | null = null;
 
 type Browse = {
   /** query|sort these results are for; null = nothing loaded yet. */
@@ -56,16 +52,12 @@ function GetMods({ game, profile, locked }: TabProps) {
     setSrcState(s);
   };
 
-  // Nexus account
-  const [nexus, setNexusState] = useState<NexusStatus | null>(nexusCache);
+  // Nexus account (the bridge caches nexus_status, so asking on every mount is cheap)
+  const [nexus, setNexus] = useState<NexusStatus | null>(null);
   const [nexusError, setNexusError] = useState("");
-  const setNexus = (s: NexusStatus) => {
-    nexusCache = s;
-    setNexusState(s);
-  };
   const loadNexus = (refresh: boolean) => {
     setNexusError("");
-    if (refresh) setNexusState(null);
+    if (refresh) setNexus(null);
     bridge<NexusStatus>("nexus_status", refresh ? { refresh: true } : {}).then(setNexus, (e) => setNexusError(errText(e)));
   };
   useEffect(() => {
@@ -89,8 +81,6 @@ function GetMods({ game, profile, locked }: TabProps) {
   // Details view (inside the tab); remembers which card to refocus on return.
   const [open, setOpen] = useState<Item | null>(null);
   const [focusKey, setFocusKey] = useState<string | null>(null);
-
-  const sortOptions = src === "nexus" ? NEXUS_SORTS : TS_SORTS;
 
   const header = (
     <Focusable className="amd-bar" flow-children="horizontal" style={{ flexWrap: "wrap" }}>
@@ -142,7 +132,7 @@ function GetMods({ game, profile, locked }: TabProps) {
   } else {
     body = (
       <Results key={src} src={src} game={game.name} profile={profile} locked={locked}
-        sortOptions={sortOptions} focusKey={focusKey}
+        focusKey={focusKey}
         onOpen={(it) => { setFocusKey(it.key); setOpen(it); }} />
     );
   }
@@ -157,24 +147,21 @@ function GetMods({ game, profile, locked }: TabProps) {
 
 // ---------- search bar + result cards ----------
 
-function Results({ src, game, profile, locked, sortOptions, focusKey, onOpen }: {
+function Results({ src, game, profile, locked, focusKey, onOpen }: {
   src: Source; game: string; profile: string; locked: boolean;
-  sortOptions: { data: string; label: string }[];
   focusKey: string | null;
   onOpen: (it: Item) => void;
 }) {
   const cacheKey = `${game}|${src}`;
+  const sortOptions = src === "nexus" ? NEXUS_SORTS : TS_SORTS;
   const [b, setB] = useState<Browse>(() => browseCache.get(cacheKey) ?? emptyBrowse(src));
-  const [text, setText] = useState(b.query);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const req = useRef(0);
   const cards = useRef(new Map<string, HTMLDivElement>());
-  /** Card to focus after the next render (load more, or back from details). */
-  const [focusNext, setFocusNext] = useState<string | null>(focusKey);
+  /** Card to focus after the next render: a key (back from details) or an index (first card of a new page). */
+  const [focusNext, setFocusNext] = useState<string | number | null>(focusKey);
 
-  const itemsRef = useRef(b.items);
-  itemsRef.current = b.items;
   useEffect(() => { browseCache.set(cacheKey, b); }, [b]);
 
   const want = `${b.query}|${b.sort}`;
@@ -185,11 +172,13 @@ function Results({ src, game, profile, locked, sortOptions, focusKey, onOpen }: 
     try {
       const r = await fetchPage(src, game, b.query, b.sort, page);
       if (id !== req.current) return;
-      const seen = new Set(page ? itemsRef.current.map((i) => i.key) : []);
-      const fresh = r.items.filter((i) => !seen.has(i.key));
-      setB((cur) => ({ ...cur, loadedFor: want, page, more: r.more, items: page ? [...cur.items, ...fresh] : r.items }));
+      setB((cur) => {
+        if (!page) return { ...cur, loadedFor: want, page, more: r.more, items: r.items };
+        const seen = new Set(cur.items.map((i) => i.key));
+        return { ...cur, loadedFor: want, page, more: r.more, items: [...cur.items, ...r.items.filter((i) => !seen.has(i.key))] };
+      });
       // Load more: focus the first new card, right below where focus was.
-      if (page && fresh.length) setFocusNext(fresh[0].key);
+      if (page) setFocusNext(b.items.length);
     } catch (e) {
       if (id === req.current) setError(errText(e));
     } finally {
@@ -203,8 +192,9 @@ function Results({ src, game, profile, locked, sortOptions, focusKey, onOpen }: 
   }, [want, locked]);
 
   useEffect(() => {
-    if (!focusNext) return;
-    const el = cards.current.get(focusNext);
+    if (focusNext === null) return;
+    const key = typeof focusNext === "number" ? b.items[focusNext]?.key : focusNext;
+    const el = key ? cards.current.get(key) : undefined;
     if (el) {
       el.focus();
       el.scrollIntoView?.({ block: "center" });
@@ -217,29 +207,25 @@ function Results({ src, game, profile, locked, sortOptions, focusKey, onOpen }: 
     setB((cur) => ({ ...cur, query, sort, loadedFor: null, items: [], page: 0, more: false }));
   };
 
-  const quickInstall = (it: Item) => {
+  // Stable callbacks, so typing or loading doesn't re-render every card.
+  const register = useCallback((key: string, el: HTMLDivElement | null) => {
+    if (el) cards.current.set(key, el); else cards.current.delete(key);
+  }, []);
+  const onOpenRef = useRef(onOpen);
+  onOpenRef.current = onOpen;
+  const open = useCallback((it: Item) => onOpenRef.current(it), []);
+  const quickInstall = useCallback((it: Item) => {
     if (it.src !== "ts" || locked) return;
     startInstall("ts_install", { game, profile, namespace: it.card.namespace, name: it.card.name }, itemName(it));
-  };
+  }, [game, profile, locked]);
 
   return (
     <Focusable flow-children="vertical" style={{ display: "flex", flexDirection: "column" }}>
-      <Focusable className="amd-bar" flow-children="horizontal">
-        <div style={{ flex: 1, minWidth: 200 }}>
-          <TextField
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter") search(text.trim()); }}
-            onBlur={() => search(text.trim())}
-            description={b.query ? `Showing results for "${b.query}"` : "Search (A opens the keyboard). Empty shows top mods."}
-          />
-        </div>
+      <SearchBox query={b.query} onSearch={(q) => search(q)}>
         <div style={{ minWidth: 200 }}>
           <Dropdown rgOptions={sortOptions} selectedOption={b.sort} onChange={(o) => search(b.query, o.data)} />
         </div>
-        <DialogButton style={{ width: "auto", minWidth: 100 }} disabled={!text && !b.query}
-          onClick={() => { setText(""); search(""); }}>Clear</DialogButton>
-      </Focusable>
+      </SearchBox>
 
       {error ? (
         <Focusable flow-children="vertical">
@@ -257,20 +243,8 @@ function Results({ src, game, profile, locked, sortOptions, focusKey, onOpen }: 
       ) : (
         <Focusable flow-children="vertical" style={{ display: "flex", flexDirection: "column", gap: 2 }}>
           {b.items.map((it) => (
-            <Focusable
-              key={it.key}
-              ref={(el: HTMLDivElement | null) => { if (el) cards.current.set(it.key, el); else cards.current.delete(it.key); }}
-              className="amd-card"
-              focusClassName="amd-focus"
-              preferredFocus={it.key === focusKey}
-              onFocus={scrollOnFocus}
-              onActivate={() => onOpen(it)}
-              onOKActionDescription="Details"
-              onSecondaryButton={it.src === "ts" && !locked ? () => quickInstall(it) : undefined}
-              onSecondaryActionDescription={it.src === "ts" && !locked ? "Install latest" : undefined}
-            >
-              <CardBody it={it} />
-            </Focusable>
+            <ResultCard key={it.key} it={it} preferred={it.key === focusKey} locked={locked}
+              register={register} onOpen={open} onQuickInstall={quickInstall} />
           ))}
           {b.more && (
             <DialogButton style={{ width: "auto", alignSelf: "center", minWidth: 220, margin: "8px 0 16px" }}
@@ -283,6 +257,53 @@ function Results({ src, game, profile, locked, sortOptions, focusKey, onOpen }: 
     </Focusable>
   );
 }
+
+/** Search field, the bar's middle controls (children) and Clear. Owns the typed
+ * text, so typing re-renders only this bar. */
+function SearchBox({ query, onSearch, children }: { query: string; onSearch: (q: string) => void; children: ReactNode }) {
+  const [text, setText] = useState(query);
+  return (
+    <Focusable className="amd-bar" flow-children="horizontal">
+      <div style={{ flex: 1, minWidth: 200 }}>
+        <TextField
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter") onSearch(text.trim()); }}
+          onBlur={() => onSearch(text.trim())}
+          description={query ? `Showing results for "${query}"` : "Search (A opens the keyboard). Empty shows top mods."}
+        />
+      </div>
+      {children}
+      <DialogButton style={{ width: "auto", minWidth: 100 }} disabled={!text && !query}
+        onClick={() => { setText(""); onSearch(""); }}>Clear</DialogButton>
+    </Focusable>
+  );
+}
+
+const ResultCard = memo(function ResultCard({ it, preferred, locked, register, onOpen, onQuickInstall }: {
+  it: Item; preferred: boolean; locked: boolean;
+  register: (key: string, el: HTMLDivElement | null) => void;
+  onOpen: (it: Item) => void;
+  onQuickInstall: (it: Item) => void;
+}) {
+  const ref = useCallback((el: HTMLDivElement | null) => register(it.key, el), [register, it.key]);
+  const quick = it.src === "ts" && !locked;
+  return (
+    <Focusable
+      ref={ref}
+      className="amd-card"
+      focusClassName="amd-focus"
+      preferredFocus={preferred}
+      onFocus={scrollOnFocus}
+      onActivate={() => onOpen(it)}
+      onOKActionDescription="Details"
+      onSecondaryButton={quick ? () => onQuickInstall(it) : undefined}
+      onSecondaryActionDescription={quick ? "Install latest" : undefined}
+    >
+      <CardBody it={it} />
+    </Focusable>
+  );
+});
 
 function CardBody({ it }: { it: Item }) {
   const c = it.card;

@@ -12,15 +12,15 @@ import {
   removeEventListener,
   definePlugin,
   routerHook,
-  toaster,
 } from "@decky/api";
 import { useEffect, useState } from "react";
 import { FaGem } from "react-icons/fa";
 import { AmethystPage } from "./AmethystPage";
 import {
-  GamesResult, JobStatus, listGames, resolveAppId, runApp, selection,
-  startGameJob, startJob, takePendingLaunch, useJob,
+  GamesResult, JobStatus, launchId, listGames, runApp, selection,
+  startGameJob, startJob, takePendingLaunch, toast, useJob,
 } from "./shared";
+import { ensureStyles, removeStyles } from "./ui";
 
 // Survives the QAM panel being closed/reopened.
 let cache: GamesResult | null = null;
@@ -73,7 +73,7 @@ function Content() {
   }, [game, profile]);
 
   const current = data?.games.find((g) => g.name === game);
-  const appId = current ? resolveAppId(current) : null;
+  const appId = current ? launchId(current) : null;
   const busy = !!job.running;
 
   const run = async (action: "deploy" | "restore", launch = false) => {
@@ -254,6 +254,7 @@ function Content() {
 }
 
 export default definePlugin(() => {
+  ensureStyles();
   routerHook.addRoute("/amethyst", AmethystPage, { exact: true });
 
   // Global listener: finish-up work happens even if the QAM panel is closed.
@@ -261,10 +262,8 @@ export default definePlugin(() => {
     const label = s.action === "install" ? "Amethyst installed"
       : s.action === "update" ? "Amethyst updated"
       : s.action === "restore" ? `${s.game}: restored` : `${s.game} / ${s.profile}`;
-    toaster.toast({
-      title: s.ok ? "Amethyst: done" : "Amethyst: failed",
-      body: s.ok ? label : `${label} - open the plugin for the log`,
-    });
+    toast(s.ok ? label : `${label} - open the plugin for the log`,
+          s.ok ? "Amethyst: done" : "Amethyst: failed");
     if (s.ok) cache = null; // deploy state changed; rescan next open
     const launch = takePendingLaunch();
     if (s.ok && launch) runApp(launch);
@@ -276,13 +275,12 @@ export default definePlugin(() => {
   const onTask = addEventListener<[string, any]>("amethyst_event", (event, t) => {
     if (event !== "task" || !t) return;
     if (t.state === "done") {
-      toaster.toast({ title: "Amethyst: installed", body: (t.result?.installed ?? [t.title]).join(", ") });
+      toast(`Installed ${(t.result?.installed ?? [t.title]).join(", ")}`);
     } else if (t.state === "error") {
-      toaster.toast({ title: "Amethyst: install failed", body: `${t.title}: ${t.error}` });
+      toast(`Install failed: ${t.title}: ${t.error || "Failed"}`);
     } else if (t.state === "choice" && !asked.has(t.id)) {
       asked.add(t.id);
-      toaster.toast({ title: "Amethyst needs you", body: `${t.title}: choose options in Amethyst`,
-                      onClick: openFullUI });
+      toast(`${t.title}: choose options in Amethyst`, "Amethyst needs you", openFullUI);
     }
   });
 
@@ -295,6 +293,7 @@ export default definePlugin(() => {
       removeEventListener("amethyst_done", done);
       removeEventListener("amethyst_event", onTask);
       routerHook.removeRoute("/amethyst");
+      removeStyles();
     },
   };
 });

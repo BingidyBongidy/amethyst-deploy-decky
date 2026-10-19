@@ -10,12 +10,12 @@ import {
 import { ReactNode, useCallback, useEffect, useState } from "react";
 import { FaExclamationTriangle, FaLock } from "react-icons/fa";
 import { ReorderList } from "./ReorderList";
-import { CSS, Check, Loading, Note, useRows } from "./ui";
+import { Check, Loading, Note, ensureStyles, useRows } from "./ui";
 import { TaskTray } from "./install/TaskTray";
 import { DownloadsTab } from "./install/DownloadsTab";
 import { GetModsTab } from "./getmods/GetModsTab";
 import {
-  BridgeGame, Mod, PluginRow, bridge, errText, resolveAppId, runApp, selection,
+  BridgeGame, Mod, PluginRow, bridge, errText, launchId, runApp, selection,
   startGameJob, toast, useBridgeEvent, useJob,
 } from "./shared";
 
@@ -167,7 +167,7 @@ type Configured = { configured: boolean; path: string; prefix: string; source: s
 
 const LAUNCHERS: Record<string, string> = {
   steam: "Steam", heroic: "Heroic", lutris: "Lutris", faugus: "Faugus", bottles: "Bottles",
-  shortcut: "Non-Steam shortcut", standalone: "Standalone install", manual: "Chosen folder",
+  unifideck: "Unifideck", shortcut: "Non-Steam shortcut", standalone: "Standalone install", manual: "Chosen folder",
 };
 const launcherName = (l: string) => LAUNCHERS[l] ?? l;
 
@@ -209,8 +209,9 @@ function SetupTab({ games, current, locked, reload, onConfigured, onProfileCreat
 
       {firstLaunch.map(({ name, source }) => {
         const g = games.find((x) => x.name === name);
-        const appId = g ? resolveAppId(g) : null;
-        const from = source === "steam" || source === "shortcut" ? "Steam" : launcherName(source);
+        const appId = g ? launchId(g) : null;
+        const from = source === "steam" || source === "shortcut" || source === "unifideck"
+          ? "Steam" : launcherName(source);
         return (
           <Focusable key={name} className="amd-bar" flow-children="horizontal">
             <span className="amd-warn" style={{ flex: 1 }}>
@@ -259,6 +260,7 @@ function pickProfile(g: BridgeGame, wanted?: string) {
 }
 
 export function AmethystPage() {
+  ensureStyles();
   const [games, setGames] = useState<BridgeGame[] | null>(null);
   const [error, setError] = useState("");
   const [game, setGame] = useState<string | undefined>(selection.game);
@@ -301,7 +303,7 @@ export function AmethystPage() {
 
   const ready = (games ?? []).filter((g) => g.configured);
   const current = ready.find((g) => g.name === game);
-  const appId = current ? resolveAppId(current) : null;
+  const appId = current ? launchId(current) : null;
 
   const deploy = async (launch: boolean) => {
     if (!current || !profile) return;
@@ -360,7 +362,6 @@ export function AmethystPage() {
 
   return (
     <div className="amd-page">
-      <style>{CSS}</style>
       {games && ready.length > 0 && (
         <Focusable className="amd-header" flow-children="horizontal">
           <div className="amd-pick">
@@ -395,7 +396,7 @@ export function AmethystPage() {
         </Focusable>
       )}
       {status && <div className="amd-status">{status}</div>}
-      <TaskTray game={current} profile={profile} />
+      <TaskTray game={current} />
       {body}
     </div>
   );

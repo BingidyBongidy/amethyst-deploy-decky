@@ -1,9 +1,9 @@
-import { DialogButton, Focusable, GamepadEvent } from "@decky/ui";
+import { DialogButton, Focusable } from "@decky/ui";
 import { ReactNode, useEffect, useRef, useState } from "react";
 import { FaDownload, FaStar, FaThumbsUp } from "react-icons/fa";
-import { Loading, Note } from "../ui";
-import { NexusCard, NexusFile, NexusMod, Task, TsCard, bridge, errText, toast } from "../shared";
-import { Item, chunks, compact, day, hideBroken, scrollOnFocus, size } from "./common";
+import { Loading, LongText, Note, formatSize, scrollOnFocus, swallowB } from "../ui";
+import { NexusCard, NexusFile, NexusMod, TsCard, bridge, errText, startInstall } from "../shared";
+import { Item, compact, day, hideBroken } from "./common";
 
 const PREMIUM_NOTE = "Installing from Nexus needs Nexus Premium. With a free account, save the file to Downloads "
   + "from another device and install it from the Downloads tab.";
@@ -18,29 +18,13 @@ type Props = {
   onBack: () => void;
 };
 
-/** Start an install task; the task tray takes it from there. */
-export async function startInstall(method: string, params: Record<string, unknown>, name: string) {
-  try {
-    await bridge<Task>(method, params);
-    toast(`Installing ${name}`);
-  } catch (e) {
-    toast(errText(e));
-  }
-}
-
 /** Mod details inside the tab. B (or the Back button) returns to the results. */
 export function Details(p: Props) {
   const backRef = useRef<HTMLDivElement>(null);
   useEffect(() => { backRef.current?.focus(); }, []);
 
-  const onCancel = (e: GamepadEvent) => {
-    e.stopPropagation();
-    e.preventDefault();
-    p.onBack();
-  };
-
   return (
-    <Focusable flow-children="vertical" onCancelButton={onCancel} onCancelActionDescription="Back to results"
+    <Focusable flow-children="vertical" onCancelButton={swallowB(p.onBack)} onCancelActionDescription="Back to results"
       style={{ display: "flex", flexDirection: "column", gap: 4 }}>
       {p.item.src === "nexus"
         ? <NexusDetails {...p} card={p.item.card} backRef={backRef} />
@@ -64,21 +48,8 @@ function Header({ picture, name, lines, children }: { picture: string; name: str
   );
 }
 
-/** Long text as focusable chunks, so the D-pad steps through it and the page scrolls along. */
-function TextBlock({ text }: { text: string }) {
-  const parts = chunks(text);
-  if (!parts.length) return null;
-  return (
-    <Focusable flow-children="vertical">
-      {parts.map((t, i) => (
-        <Focusable key={i} className="amd-row" focusClassName="amd-focus" onFocus={scrollOnFocus}
-          onActivate={() => {}} style={{ display: "block", whiteSpace: "pre-wrap", lineHeight: 1.5, fontSize: 13 }}>
-          {t}
-        </Focusable>
-      ))}
-    </Focusable>
-  );
-}
+/** Description text, lined up with the rows around it. */
+const TextBlock = ({ text }: { text: string }) => <LongText text={text} style={{ padding: "0 6px" }} />;
 
 const Heading = ({ children }: { children: ReactNode }) => <div className="amd-row amd-sep">{children}</div>;
 
@@ -147,7 +118,7 @@ function NexusDetails(p: Props & { card: NexusCard; backRef: React.RefObject<HTM
                   {f.primary && <span className="amd-tag">MAIN DOWNLOAD</span>}
                 </div>
                 <div className="amd-sub">
-                  {[f.version && `version ${f.version}`, f.category, size(f.size)].filter(Boolean).join(" · ")}
+                  {[f.version && `version ${f.version}`, f.category, formatSize(f.size)].filter(Boolean).join(" · ")}
                 </div>
                 {f.description && (
                   <div className="amd-sub" style={{ whiteSpace: "pre-wrap", paddingTop: 2 }}>{f.description}</div>
@@ -191,7 +162,7 @@ function TsDetails(p: Props & { card: TsCard; backRef: React.RefObject<HTMLDivEl
       <Header picture={c.picture} name={name} lines={[
         `by ${c.author || c.namespace}`,
         <><FaDownload /> {compact(c.downloads)}   <FaStar /> {compact(c.rating)}
-          {c.size ? `   · ${size(c.size)}` : ""}{c.updated ? `   · updated ${day(c.updated)}` : ""}</>,
+          {c.size ? `   · ${formatSize(c.size)}` : ""}{c.updated ? `   · updated ${day(c.updated)}` : ""}</>,
       ]} />
       {c.summary ? (
         <>
