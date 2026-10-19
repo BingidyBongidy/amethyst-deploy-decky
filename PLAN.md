@@ -29,8 +29,7 @@ Mode and no mouse-style UI.
   - `loot_sort`: mirrors the GUI's Sort Plugins
 - `tests/bridge_smoke.py` + `tests/make_fake_home.sh` exercise all of that
   against real Amethyst source with a fake Steam library holding Skyrim SE.
-  Everything passes except `loot_sort`, which hasn't been run yet because it
-  needs the libloot native module (see "Testing").
+  Everything passes, including `loot_sort` with libloot 0.29.6 built locally.
 - `main.py` has a `BridgeClient` that starts the helper with
   `flatpak run --command=python3 io.github.Amethyst.ModManager <plugin dir>/amethyst_bridge.py`,
   sends serialised requests with per-method timeouts, restarts it if it dies,
