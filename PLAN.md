@@ -19,16 +19,19 @@ Mode and no mouse-style UI.
 - `defaults/amethyst_bridge.py`: a long-lived JSON-RPC helper run inside
   Amethyst's Flatpak Python. It imports Amethyst's own modules, so behaviour
   matches the GUI. It has these methods:
-  - `list_games`, `detect_installed` (Steam libraries + appmanifest)
-  - `configure_game`: game path, Proton prefix and profile structure, the
-    same steps as the GUI's Configure Game dialog for a Steam install
+  - `list_games`, `detect_installed`: every launcher Amethyst knows (Steam,
+    Heroic, Lutris, Faugus, Bottles, non-Steam shortcuts, standalone), via the
+    same `InstalledIndex` the GUI's Add Game picker uses
+  - `configure_game`: mirrors the GUI's Configure Game auto-detect: first
+    install candidate, its Wine/Proton prefix, launcher ids, profile structure
   - `create_profile`
   - `mods`, `set_mod_enabled` (also syncs plugins.txt), `move_mod`
   - `plugins`, `set_plugin_enabled`, `move_plugin` (refuses moves that put a
     plugin above its masters, like the GUI)
   - `loot_sort`: mirrors the GUI's Sort Plugins
 - `tests/bridge_smoke.py` + `tests/make_fake_home.sh` exercise all of that
-  against real Amethyst source with a fake Steam library holding Skyrim SE.
+  against real Amethyst source with a fake Steam library holding Skyrim SE
+  and a fake Heroic GOG install of Fallout New Vegas.
   Everything passes, including `loot_sort` with libloot 0.29.6 built locally.
 - `main.py` has a `BridgeClient` that starts the helper with
   `flatpak run --command=python3 io.github.Amethyst.ModManager <plugin dir>/amethyst_bridge.py`,
@@ -81,15 +84,49 @@ Original spec:
   launch the game once so Steam creates the Proton prefix.
 - Keep the UI usable while a deploy job runs; disable mutating actions.
 
-### 3. Phase 2: Nexus
-- Login: Nexus SSO (Amethyst has `Nexus/nexus_oauth.py`) opened in Steam's
-  browser; the token goes in the keyring the same way the GUI stores it.
-- Search, browse and install. Premium accounts can use direct API downloads.
-  Free accounts need the `nxm://` key or a manual download, depending on
-  what step 1 found. `Nexus/manual_download_watch.py` is Amethyst's own
-  free-user flow and can be reused.
-- Install pipeline: `Utils/mods/install.py`. FOMOD: `Utils/fomod/installer.py`,
-  rendered as controller pages, one step per page.
+### 3. Phase 2: browse, search and install mods (no Desktop Mode, ever)
+Decided 2026-10-19 with Brad: everything happens in the plugin, with **zero
+mouse**: gamepad buttons and D-pad only, never a trackpad or stick-as-cursor
+(see CLAUDE.md). The target user has a **free** Nexus account. Free accounts can't download through the API
+alone: every file needs a click on the Nexus site, which then either hands
+over an `nxm://` link (key + expiry, which the API accepts for free users) or
+saves the archive through the browser. Amethyst works the same way
+(`Nexus/manual_download_watch.py`, `Nexus/nexus_api.py:get_download_links`).
+
+Build order (each step ships a zip for Brad to test):
+1. **Install from Downloads**: list archives in `~/Downloads`, install one into
+   the current profile with `Utils/mods/install.py` (`prepare_archive` ->
+   `finish_install`). FOMOD installers become controller pages, one step per
+   page (`Utils/fomod/session.py` gives option states). This is the install
+   pipeline every later step uses.
+2. **Nexus login**: `Nexus/nexus_oauth.py` (OAuth + PKCE, redirect to
+   `localhost:7890`). The bridge runs the callback server; the frontend opens
+   the authorise URL in Steam's browser. Tokens go in the keyring like the GUI.
+3. **Browse and search**: `search_mods`, `get_trending_mods_graphql`,
+   `get_mod`, `get_mod_files` for the current game. Cards with image, summary,
+   endorsements, files list. Works for free accounts.
+4. **Downloads**. Premium: one press, straight through the API, fully
+   gamepad. Free: Nexus requires a click on its own site for every file, and
+   Steam's browser only clicks with a cursor, which breaks the zero-mouse rule.
+   **Open question for Brad** before building this step:
+   - Recommend Premium for the zero-mouse experience, and keep free accounts
+     to Install from Downloads and Thunderstore; or
+   - check on the device whether Steam's browser lets the D-pad focus and press
+     links on a page (if it does, the free flow can stay gamepad-only); or
+   - have the plugin press the site's button on the user's behalf. Don't build
+     this without checking Nexus's terms: it may count as automating free
+     downloads, which Nexus forbids.
+5. **Thunderstore games** (BepInEx titles: Valheim, Lethal Company, ...):
+   `Thunderstore/*` has no account limits, so these can install in one press.
+
+### 3a. More install sources
+- **Unifideck** (Decky plugin for Epic/GOG/Amazon): Amethyst can't see its
+  installs. Add to the bridge's detect/configure: install path from
+  `~/.config/legendary/installed.json` matched on Amethyst's
+  `heroic_app_names`, Steam shortcut id from
+  `~/.local/share/unifideck/games.map` (`epic:<appName> = exe\twork_dir\tappid`),
+  saved as Amethyst's `shortcut_appid` so the prefix resolves through the
+  `compatdata/<appid>` link Unifideck makes on first launch.
 
 ### 4. Phase 3: collections
 - `Utils/collections/*`. Collection downloads for free accounts have the same

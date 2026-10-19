@@ -20,7 +20,15 @@ def plugin(path, masters):
 
 G = "Skyrim Special Edition"
 r, e = call("list_games"); sk = next(x for x in r if x["name"] == G); print("skyrim before:", sk["configured"], sk["has_plugins"], sk["loot"])
-print("detect:", call("detect_installed"))
+det, e = call("detect_installed"); print("detect:", det, e)
+assert {"name": G, "launchers": ["steam"]} in det, det
+assert any(d["name"] == "Fallout New Vegas" and "heroic" in d["launchers"] for d in det), det
+r, e = call("configure_game", game="Fallout New Vegas"); print("configure FNV:", r, e)
+assert not e and r["source"] == "heroic" and r["prefix"].endswith("Prefixes/1454587428/pfx"), (r, e)
+assert not r["needs_first_launch"], r
+r, e = call("list_games"); nv = next(x for x in r if x["name"] == "Fallout New Vegas"); print("fnv after:", nv["configured"], nv["profiles"])
+assert nv["configured"]
+assert all(d["name"] != "Fallout New Vegas" for d in call("detect_installed")[0])
 print("configure:", call("configure_game", game=G))
 r, e = call("list_games"); sk = next(x for x in r if x["name"] == G); print("skyrim after:", sk["configured"], sk["profiles"])
 # install two mods by hand into staging, like Amethyst would

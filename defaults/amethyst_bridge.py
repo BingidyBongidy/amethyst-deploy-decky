@@ -10,6 +10,7 @@ Anything Amethyst prints goes to stderr; stdout carries only responses.
 """
 from __future__ import annotations
 
+import importlib
 import json
 import os
 import sys
@@ -118,21 +119,26 @@ class Bridge:
         return [self._game_info(n, g) for n, g in sorted(self.games.items())]
 
     def detect_installed(self):
-        """Unconfigured games that are installed through Steam (path found)."""
-        from Utils.launchers.steam import find_steam_libraries
-        libs = find_steam_libraries()
+        """Unconfigured games installed through any launcher Amethyst knows
+        (Steam, Heroic, Lutris, Faugus, Bottles, non-Steam shortcuts, standalone).
+
+        Mirror of AddGameView._scan_installed_games (gui_qt/add_game_view.py):
+        one InstalledIndex, then game_launchers() per game."""
+        from Utils.launchers.installed import InstalledIndex
         if not self.games:
             self.games = discover_games()
+        index = InstalledIndex(log=self.log)
         found = []
         for name, g in sorted(self.games.items()):
             try:
                 if g.is_configured():
                     continue
-            except Exception:
+                launchers = index.game_launchers(g)
+            except Exception as e:
+                self.log(f"detect {name}: {e}")
                 continue
-            path = self._find_steam_install(g, libs)
-            if path:
-                found.append({"name": name, "path": str(path)})
+            if launchers:
+                found.append({"name": name, "launchers": list(launchers)})
         return found
 
     @staticmethod
@@ -142,50 +148,215 @@ class Bridge:
             names = [getattr(g, "exe_name", None)] + list(getattr(g, "exe_name_alts", []) or [])
         return [n for n in names if n]
 
-    def _find_steam_install(self, g, libs):
-        from Utils.launchers.steam import find_game_by_steam_id
-        sid = str(getattr(g, "steam_id", "") or "")
-        if not sid or not libs:
-            return None
-        for exe in self._exe_names(g):
+    @staticmethod
+    def _heroic_app_names(g) -> list[str]:
+        """Mirror of _heroic_app_names in gui_qt/configure_game_view.py."""
+        names = list(getattr(g, "heroic_app_names", []) or [])
+        if not names and getattr(g, "name", None):
             try:
-                hit = find_game_by_steam_id(libs, sid, exe)
+                from Utils.config_paths import get_game_config_path
+                p = get_game_config_path(g.name)
+                if p.is_file():
+                    data = json.loads(p.read_text(encoding="utf-8"))
+                    saved = (data.get("heroic_app_name", "") or "").strip()
+                    if saved:
+                        names = [saved]
             except Exception:
-                hit = None
-            if hit:
-                return Path(hit)
+                pass
+        return names
+
+    @staticmethod
+    def _is_native_exe(exe) -> bool:
+        """Mirror of _is_native_exe_name in gui_qt/configure_game_view.py."""
+        return bool(exe) and Path(str(exe)).suffix.casefold() not in {
+            ".exe", ".bat", ".cmd", ".com", ".msi"}
+
+    def _install_candidates(self, g) -> list[dict]:
+        """One candidate per launcher the game is installed through, best first.
+
+        Mirror of ConfigureGameView._game_scan_worker (gui_qt/configure_game_view.py):
+        same order (Heroic, Lutris, Faugus, Bottles, non-Steam shortcut, Steam),
+        then a standalone install if nothing else matched."""
+        out: list[dict] = []
+
+        def add(source, path, prefix, launcher_id, exe=None):
+            out.append({"source": source, "path": Path(path),
+                        "prefix": Path(prefix) if prefix else None, "id": launcher_id,
+                        "prefix_mode": ("native" if self._is_native_exe(exe)
+                                        else "resolved" if prefix else "detect")})
+
+        exe_names = self._exe_names(g)
+        try:
+            from Utils.launchers.heroic import (
+                find_heroic_game_info_by_app_names, find_heroic_game_info_by_exe)
+            heroic = self._heroic_app_names(g)
+            if heroic:
+                # Declared app names are authoritative; the GUI skips the exe scan.
+                info = find_heroic_game_info_by_app_names(heroic)
+                if info:
+                    add("heroic", *info)
+            else:
+                for exe in exe_names:
+                    info = find_heroic_game_info_by_exe(exe)
+                    if info:
+                        add("heroic", *info, exe)
+                        break
+            from Utils.launchers.lutris import find_lutris_game_info_by_exe
+            for exe in exe_names:
+                info = find_lutris_game_info_by_exe(exe)
+                if info:
+                    add("lutris", *info, exe)
+                    break
+            from Utils.launchers.faugus import find_faugus_game_info_by_exe
+            for exe in exe_names:
+                info = find_faugus_game_info_by_exe(exe)
+                if info:
+                    add("faugus", *info, exe)
+                    break
+            from Utils.launchers.bottles import find_bottles_game_info_by_exes
+            info = find_bottles_game_info_by_exes(exe_names)
+            if info:
+                add("bottles", *info)
+            from Utils.launchers.steam_shortcuts import find_shortcut_game_info_by_exe
+            for exe in exe_names:
+                info = find_shortcut_game_info_by_exe(exe)
+                if info:
+                    add("shortcut", *info, exe)
+                    break
+            sid = str(getattr(g, "steam_id", "") or "")
+            if sid:
+                from Utils.launchers.steam import (
+                    find_steam_libraries, find_game_by_steam_id, find_game_in_libraries)
+                libs = find_steam_libraries()
+                found = matched = None
+                for exe in exe_names:
+                    found = find_game_by_steam_id(libs, sid, exe)
+                    if found:
+                        matched = exe
+                        break
+                if not found:
+                    for exe in exe_names:
+                        found = find_game_in_libraries(libs, exe)
+                        if found:
+                            matched = exe
+                            break
+                if found:
+                    add("steam", found, None, None, matched)
+        except Exception as e:
+            traceback.print_exc()
+            self.log(f"install scan failed: {e}")
+        if not out:
+            try:
+                detect = getattr(g, "detect_standalone_install", None)
+                found = detect() if callable(detect) else None
+                if found is not None:
+                    add("standalone", found, None, None, getattr(g, "exe_name", None))
+            except Exception as e:
+                self.log(f"standalone detection failed: {e}")
+        return out
+
+    def _find_prefix(self, g, game_path, source, launcher_id):
+        """Mirror of ConfigureGameView._prefix_scan_worker: look for the prefix
+        through the launcher the install came from (any launcher if None)."""
+        exe_names = [e for e in [getattr(g, "exe_name", None)]
+                     + list(getattr(g, "exe_name_alts", []) or []) if e]
+        try:
+            from Utils.launchers.steam import find_prefix
+            from Utils.launchers.heroic import find_heroic_prefix
+            ids = [getattr(g, "steam_id", None)] + [
+                str(s) for s in getattr(g, "alt_steam_ids", []) or [] if s]
+            try:
+                saved = g.get_shortcut_appid() or ""
+            except AttributeError:
+                saved = ""
+            if source == "shortcut" and launcher_id:
+                ids = [launcher_id]
+            elif saved:
+                ids.insert(0, saved)
+            if source in (None, "steam", "shortcut"):
+                for s in [x for x in ids if x]:
+                    found = find_prefix(s, game_path)
+                    if found:
+                        return found
+            if source in (None, "heroic"):
+                found = find_heroic_prefix([str(launcher_id)] if launcher_id
+                                           else self._heroic_app_names(g))
+                if found:
+                    return found
+            for src, mod, fn in (("lutris", "Utils.launchers.lutris", "find_lutris_game_info_by_exe"),
+                                 ("faugus", "Utils.launchers.faugus", "find_faugus_game_info_by_exe"),
+                                 ("shortcut", "Utils.launchers.steam_shortcuts", "find_shortcut_game_info_by_exe")):
+                if source not in (None, src):
+                    continue
+                find = getattr(importlib.import_module(mod), fn)
+                for exe in exe_names:
+                    info = find(exe)
+                    if info and info[1] is not None and (
+                            not launcher_id or str(info[2]) == str(launcher_id)):
+                        return info[1]
+            if source in (None, "bottles"):
+                from Utils.launchers.bottles import find_bottles_game_info_by_exes
+                info = find_bottles_game_info_by_exes(
+                    exe_names, game_path=game_path, program_id=launcher_id)
+                if info:
+                    return info[1]
+        except Exception as e:
+            self.log(f"prefix lookup failed: {e}")
         return None
 
     def configure_game(self, game: str, path: str = ""):
-        """Same steps as Amethyst's Configure Game dialog for a Steam install:
-        game path, Proton prefix, then the profile folder structure."""
+        """Same steps as Amethyst's Configure Game dialog with its auto-detect
+        result applied (ConfigureGameView._apply_install_choice + _on_save):
+        game path, Proton prefix, launcher ids, then the profile structure."""
         g = self._game(game)
         if path:
-            target = Path(path)
+            c = {"source": "manual", "path": Path(path), "prefix": None,
+                 "id": None, "prefix_mode": "detect"}
         else:
-            from Utils.launchers.steam import find_steam_libraries
-            target = self._find_steam_install(g, find_steam_libraries())
-            if target is None:
-                raise BridgeError(f"Couldn't find {g.name} in your Steam libraries.")
+            cands = self._install_candidates(g)
+            if not cands:
+                raise BridgeError(f"Couldn't find {g.name} in Steam, Heroic, Lutris, Faugus, "
+                                  "Bottles or your non-Steam shortcuts.")
+            c = cands[0]  # the GUI auto-applies the first candidate
+        target = c["path"]
         if not target.is_dir():
             raise BridgeError(f"Game folder not found: {target}")
+        try:
+            if g.is_configured() and g.get_deploy_active():
+                raise BridgeError("Restore the game before changing where it's installed.")
+        except BridgeError:
+            raise
+        except Exception:
+            pass
         g.set_game_path(target)
-        sid = str(getattr(g, "steam_id", "") or "")
+
+        source = c["source"]
+        # Which games get a prefix: the GUI's has_prefix_src (ConfigureGameView._build_paths_panel).
+        uses_appimage = all(callable(getattr(g, n, None)) for n in (
+            "get_appimage_path", "set_appimage_path", "detect_appimage", "scan_appimage"))
+        has_prefix_src = not uses_appimage and hasattr(g, "set_prefix_path") and bool(
+            getattr(g, "steam_id", None) or self._heroic_app_names(g)
+            or source in ("heroic", "lutris", "faugus", "bottles", "shortcut"))
         prefix = None
-        if sid and hasattr(g, "set_prefix_path"):
-            try:
-                from Utils.launchers.steam import find_prefix
-                prefix = find_prefix(sid, target)
-                if prefix:
-                    g.set_prefix_path(prefix)
-            except Exception as e:
-                self.log(f"prefix lookup failed: {e}")
+        if has_prefix_src and c["prefix_mode"] != "native":
+            prefix = c["prefix"] or self._find_prefix(
+                g, target, None if source == "manual" else source, c["id"])
+            if prefix:
+                g.set_prefix_path(prefix)
+        if source != "manual" and hasattr(g, "set_launcher_ids"):
+            # "" clears the launchers that lost, like _apply_install_choice.
+            keys = {"heroic": "heroic_app_name", "lutris": "lutris_slug",
+                    "faugus": "faugus_gameid", "bottles": "bottles_program",
+                    "shortcut": "shortcut_appid"}
+            g.set_launcher_ids(**{k: (str(c["id"] or "") if source == s else "")
+                                  for s, k in keys.items()})
+
         from Utils.profiles.structure import create_profile_structure
         create_profile_structure(g)
         return {"configured": bool(g.is_configured()), "path": str(target),
-                "prefix": str(prefix) if prefix else "",
-                # Proton games need the prefix; Steam only creates it on first launch.
-                "needs_first_launch": bool(sid) and prefix is None}
+                "prefix": str(prefix) if prefix else "", "source": source,
+                # Proton games need the prefix; the launcher only creates it on first launch.
+                "needs_first_launch": has_prefix_src and c["prefix_mode"] != "native" and prefix is None}
 
     def create_profile(self, game: str, name: str):
         g = self._configured(game)

@@ -23,8 +23,10 @@ state, next steps and how to test.
 - Host commands from the backend must use `_user_env()`, because Decky's
   `LD_LIBRARY_PATH` breaks `flatpak`.
 - Stop the bridge before any CLI job that touches the same files (deploy, restore, update).
-- The UI must work with a controller only: no mouse-style widgets, use `Focusable`
-  and Steam-native components.
+- Zero mouse: every flow must work with gamepad buttons and the D-pad alone, using
+  `Focusable` and Steam-native components. No mouse-style widgets, and no step that
+  needs a trackpad or stick-as-cursor (that includes clicking on a web page in
+  Steam's browser). If a flow can't meet this, raise it with Brad; don't ship it.
 - Licence: GPL-3.0-or-later (the bridge imports Amethyst's GPL code).
 
 ## Debugging on the device

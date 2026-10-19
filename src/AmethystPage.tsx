@@ -225,24 +225,31 @@ function NewProfileModal({ game, closeModal, onCreated }: {
 export const askNewProfile = (game: string, onCreated: (name: string) => void) =>
   showModal(<NewProfileModal game={game} onCreated={onCreated} />);
 
-type Detected = { name: string; path: string };
-type Configured = { configured: boolean; path: string; prefix: string; needs_first_launch: boolean };
+type Detected = { name: string; launchers: string[] };
+type Configured = { configured: boolean; path: string; prefix: string; source: string; needs_first_launch: boolean };
+
+const LAUNCHERS: Record<string, string> = {
+  steam: "Steam", heroic: "Heroic", lutris: "Lutris", faugus: "Faugus", bottles: "Bottles",
+  shortcut: "Non-Steam shortcut", standalone: "Standalone install", manual: "Chosen folder",
+};
+const launcherName = (l: string) => LAUNCHERS[l] ?? l;
 
 function SetupTab({ games, current, locked, reload, onConfigured, onProfileCreated }: {
   games: BridgeGame[]; current?: BridgeGame; locked: boolean; reload: number;
   onConfigured: (game: string) => void; onProfileCreated: (game: string, profile: string) => void;
 }) {
   const { rows, error, setRows } = useRows<Detected>(() => bridge<Detected[]>("detect_installed"), [reload]);
+  const ready = games.filter((g) => g.configured);
   const [working, setWorking] = useState("");
-  const [firstLaunch, setFirstLaunch] = useState<string[]>([]);
+  const [firstLaunch, setFirstLaunch] = useState<{ name: string; source: string }[]>([]);
 
   const configure = async (d: Detected) => {
     setWorking(d.name);
     try {
-      const r = await bridge<Configured>("configure_game", { game: d.name, path: d.path });
+      const r = await bridge<Configured>("configure_game", { game: d.name });
       setRows((rs) => (rs ?? []).filter((x) => x.name !== d.name));
-      if (r.needs_first_launch) setFirstLaunch((f) => [...f, d.name]);
-      toast(`${d.name} is set up`);
+      if (r.needs_first_launch) setFirstLaunch((f) => [...f, { name: d.name, source: r.source }]);
+      toast(`${d.name} is set up (${launcherName(r.source)})`);
       onConfigured(d.name);
     } catch (e) {
       toast(errText(e));
@@ -263,13 +270,14 @@ function SetupTab({ games, current, locked, reload, onConfigured, onProfileCreat
         </>
       )}
 
-      {firstLaunch.map((name) => {
+      {firstLaunch.map(({ name, source }) => {
         const g = games.find((x) => x.name === name);
         const appId = g ? resolveAppId(g) : null;
+        const from = source === "steam" || source === "shortcut" ? "Steam" : launcherName(source);
         return (
           <Focusable key={name} className="amd-bar" flow-children="horizontal">
             <span className="amd-warn" style={{ flex: 1 }}>
-              <FaExclamationTriangle /> Launch {name} once from Steam so it creates its Proton prefix, then set it up again here.
+              <FaExclamationTriangle /> Launch {name} once from {from} so it creates its Wine/Proton prefix, then set it up again here.
             </span>
             {appId && <DialogButton style={{ width: "auto" }} onClick={() => runApp(appId)}>Play now</DialogButton>}
           </Focusable>
@@ -278,12 +286,21 @@ function SetupTab({ games, current, locked, reload, onConfigured, onProfileCreat
 
       <div className="amd-status" style={{ marginTop: 12 }}>Installed games that aren't set up in Amethyst yet</div>
       {error ? <Note>{error}</Note> : !rows ? <Loading text="Looking through your Steam libraries…" /> :
-        !rows.length ? <Note>Nothing to set up. Every supported game Steam has installed is already set up.</Note> :
+        !rows.length ? (
+          <Note>
+            {ready.length
+              ? "No other supported games found."
+              : "No supported games found."}{" "}
+            Amethyst looks in Steam, Heroic, Lutris, Faugus, Bottles and your non-Steam shortcuts, and only
+            for games it has mod support for (Bethesda games, Cyberpunk 2077, Stardew Valley, Baldur's Gate 3,
+            Balatro and others). Install one, then come back to this tab.
+          </Note>
+        ) :
           rows.map((d) => (
             <Focusable key={d.name} className="amd-bar" flow-children="horizontal">
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div>{d.name}</div>
-                <div className="amd-tag" style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{d.path}</div>
+                <div className="amd-tag">{d.launchers.map(launcherName).join(" · ")}</div>
               </div>
               <DialogButton style={{ width: "auto", minWidth: 140 }} disabled={locked || !!working}
                 onClick={() => configure(d)}>
