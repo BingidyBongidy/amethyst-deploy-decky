@@ -96,7 +96,11 @@ tested by `tests/install_smoke.py` (incl. a live Thunderstore install). Frontend
 - [ ] Get mods → Nexus: the QR opens the login page on a phone on the same Wi-Fi
       (if not, the Deck's firewall/network blocks it - check the Decky log for the
       URL); pasting the key logs in; browse/search/details work.
-- [ ] Nexus Premium file install, and the free-account message.
+- [ ] Nexus Premium file install.
+- [ ] Free account: pressing a file opens its Nexus page in Steam's browser;
+      after logging in to the site once, Slow download saves into ~/Downloads
+      (if Steam saves elsewhere, the watcher never sees it - check where) and
+      the mod installs on its own.
 - [ ] Thunderstore game (e.g. Valheim): search, Install latest, dependency prompt.
 - [ ] Focus after "Load more", after Back from details, and after FOMOD Next.
 - [ ] Unifideck game: Deploy & Play launches the Unifideck shortcut.
