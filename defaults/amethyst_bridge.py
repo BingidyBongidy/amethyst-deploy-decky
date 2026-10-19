@@ -551,24 +551,28 @@ class Bridge:
         g = self._configured(game)
         if not getattr(g, "plugin_extensions", None):
             return []
-        rows = self._plugin_rows(g, profile)
-        if not any(r.vanilla for r in rows):
-            self._log_missing_base_game(g)
-        return self._plugin_json(rows)
+        return self._plugin_json(self._plugin_rows(g, profile))
 
-    def _log_missing_base_game(self, g):
-        """No base-game plugins found: the saved game folder (or its Data
-        folder's spelling) doesn't match what Amethyst expects. Log what's
-        there so the Decky log shows why."""
-        try:
-            root = g.get_game_path()
-            data = g.get_vanilla_plugins_path() if hasattr(g, "get_vanilla_plugins_path") else None
-            top = sorted(p.name for p in root.iterdir())[:40] if root and root.is_dir() else []
-            self.log(f"plugins: {g.name}: no base-game plugins "
-                     f"{getattr(g, 'vanilla_plugins', [])} in {data} "
-                     f"(exists={bool(data and data.is_dir())}); game folder {root} has {top}")
-        except Exception as e:
-            self.log(f"plugins: {g.name}: base-game check failed: {e}")
+    def game_folder_check(self, game: str):
+        """Where Amethyst looks for the base game's plugins, and what's there.
+        The Load order tab shows this when no base-game plugins were found
+        (saved game folder wrong, or its Data folder spelled differently)."""
+        g = self._configured(game)
+        root = g.get_game_path()
+        data = g.get_vanilla_plugins_path() if hasattr(g, "get_vanilla_plugins_path") else None
+
+        def listing(folder, limit=40):
+            try:
+                return sorted(p.name + ("/" if p.is_dir() else "") for p in folder.iterdir())[:limit]
+            except (OSError, AttributeError):
+                return []
+
+        info = {"game_path": str(root or ""), "data_path": str(data or ""),
+                "data_exists": bool(data and data.is_dir()),
+                "expected": list(getattr(g, "vanilla_plugins", []) or []),
+                "game_folder": listing(root), "data_folder": listing(data)}
+        self.log(f"game folder check: {g.name}: {info}")
+        return info
 
     def _save_plugin_rows(self, g, profile, rows):
         from gui_qt.plugin_state import (save_plugins, master_block_enabled,

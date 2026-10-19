@@ -62,6 +62,8 @@ print("vanilla move:", call("move_plugin", game=G, profile="default", name="Skyr
 print("disable mod -> plugins:", [ (x["name"]) for x in call("set_mod_enabled", game=G, profile="default", name="Patch Pack", enabled=False)[0] if False] or "", [(x["name"], x["enabled"]) for x in call("plugins", game=G, profile="default")[0]])
 r, e = call("remove_mod", game=G, profile="default", name="Textures HD"); print("uninstall:", [x["name"] for x in r or []], e)
 assert not e and all(x["name"] != "Textures HD" for x in r) and not os.path.exists(f"{root}/Textures HD"), (r, e)
+fc, e = call("game_folder_check", game=G); print("folder check:", fc["data_exists"], fc["data_folder"][:3], e)
+assert fc["data_exists"] and "Skyrim.esm" in fc["data_folder"], fc
 print("new profile:", call("create_profile", game=G, name="Survival"))
 print("dupe profile:", call("create_profile", game=G, name="Survival")[1])
 print("loot:", call("loot_sort", game=G, profile="default")[1])

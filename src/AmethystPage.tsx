@@ -74,6 +74,31 @@ function ModsTab({ game, profile, locked, reload }: { game: string; profile: str
 
 type LootResult = { moved: number; warnings: string[]; plugins: PluginRow[]; log: string[] };
 
+type FolderCheck = {
+  game_path: string; data_path: string; data_exists: boolean;
+  expected: string[]; game_folder: string[]; data_folder: string[];
+};
+
+/** No base-game plugins found: show where Amethyst looked and what's there, so
+ * the cause (wrong game folder, Data folder spelled differently) is visible. */
+function BaseGameMissing({ game }: { game: string }) {
+  const [info, setInfo] = useState<FolderCheck | null>(null);
+  useEffect(() => {
+    bridge<FolderCheck>("game_folder_check", { game }).then(setInfo, () => {});
+  }, [game]);
+  if (!info) return null;
+  return (
+    <div className="amd-warn" style={{ padding: "4px 14px 10px", whiteSpace: "normal", lineHeight: 1.5 }}>
+      <div><FaExclamationTriangle /> The base game's files ({info.expected.join(", ")}) weren't found, so every
+        mod that needs them shows "Missing". If this game was set up before, try Set up again on the Setup tab.</div>
+      <div className="amd-sub">Looked in: {info.data_path || "(no game folder saved)"}
+        {info.data_exists ? "" : " (this folder doesn't exist)"}</div>
+      {info.data_exists && <div className="amd-sub">It contains: {info.data_folder.join(", ") || "nothing"}</div>}
+      <div className="amd-sub">Game folder {info.game_path} contains: {info.game_folder.join(", ") || "nothing"}</div>
+    </div>
+  );
+}
+
 function PluginsTab({ game, profile, loot, locked, reload }: {
   game: string; profile: string; loot: boolean; locked: boolean; reload: number;
 }) {
@@ -106,6 +131,7 @@ function PluginsTab({ game, profile, loot, locked, reload }: {
         </span>
       </Focusable>
       {warnings.map((w, i) => <div key={i} className="amd-warn" style={{ padding: "0 14px 6px" }}>{w}</div>)}
+      {rows.length > 0 && !rows.some((r) => r.vanilla) && <BaseGameMissing game={game} />}
       {!rows.length ? <Note>No plugins found. Enable some mods first.</Note> : (
         <ReorderList<PluginRow>
           items={rows}
@@ -194,7 +220,7 @@ function SetupTab({ games, current, locked, reload, onConfigured, onProfileCreat
       const r = await bridge<Configured>("configure_game", { game: d.name });
       setRows((rs) => (rs ?? []).filter((x) => x.name !== d.name));
       if (r.needs_first_launch) setFirstLaunch((f) => [...f, { name: d.name, source: r.source }]);
-      toast(`${d.name} is set up (${launcherName(r.source)})`);
+      toast(`${d.name} is set up (${launcherName(r.source)}): ${r.path}`);
       onConfigured(d.name);
     } catch (e) {
       toast(errText(e));
@@ -212,6 +238,16 @@ function SetupTab({ games, current, locked, reload, onConfigured, onProfileCreat
             onClick={() => askNewProfile(current.name, (p) => onProfileCreated(current.name, p))}>
             New profile for {current.name}
           </DialogButton>
+          <DialogButton style={{ width: "auto", alignSelf: "flex-start", minWidth: 240 }}
+            disabled={locked || !!working || current.deploy_active}
+            onClick={() => showModal(
+              <ConfirmModal strTitle={`Set up ${current.name} again?`}
+                strDescription="Finds the game's folder and prefix again, the same way as the first setup. Your mods and profiles stay."
+                strOKButtonText="Set up again"
+                onOK={() => configure({ name: current.name, launchers: [] })} />)}>
+            Set up {current.name} again
+          </DialogButton>
+          {current.deploy_active && <div className="amd-sub">Restore vanilla first to set it up again.</div>}
         </>
       )}
 
