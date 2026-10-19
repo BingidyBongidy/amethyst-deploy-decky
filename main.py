@@ -15,6 +15,8 @@ import decky
 
 FLATPAK_ID = "io.github.Amethyst.ModManager"
 MARKER = "AMETHYST_DECKY_JSON:"
+REMOTE_NAME = "modmanager-origin"
+REMOTE_URL = "https://chrisdkn.github.io/Amethyst-Mod-Manager/amethyst.flatpakrepo"
 APPIMAGE_NAMES = ("AmethystModManager-x86_64.AppImage",)
 
 
@@ -149,44 +151,81 @@ class Plugin:
                                  if l.strip() and not l.startswith(("No profiles", "["))]
         return games
 
-    async def start_job(self, action: str, game: str, profile: str = "") -> dict:
-        """action: 'deploy' | 'restore'. Runs in background; poll job_status."""
+    async def start_job(self, action: str, game: str = "", profile: str = "") -> dict:
+        """action: deploy | restore | install | update. Runs in background."""
         if self.job and not self.job.done():
             return {"ok": False, "error": "Something is already running."}
-        if action not in ("deploy", "restore"):
+        if action in ("install", "update"):
+            cmds = self._flatpak_commands(action)
+        elif action in ("deploy", "restore"):
+            inst = await self._install()
+            if inst["kind"] == "none":
+                return {"ok": False, "error": "Amethyst isn't installed."}
+            cmds = [[*inst["cli"], action, game] + ([profile] if action == "deploy" else [])]
+        else:
             return {"ok": False, "error": f"unknown action {action}"}
-        inst = await self._install()
-        if inst["kind"] == "none":
-            return {"ok": False, "error": "Amethyst isn't installed."}
-        args = [*inst["cli"], action, game] + ([profile] if action == "deploy" else [])
         self.job_log = []
         self.job_state = {"action": action, "game": game, "profile": profile,
                           "running": True, "ok": None}
-        self.job = asyncio.get_event_loop().create_task(self._run_job(args))
+        self.job = asyncio.get_event_loop().create_task(self._run_job(cmds))
         return {"ok": True}
 
-    async def _run_job(self, args: list):
-        decky.logger.info("job: %s", " ".join(args))
+    def _flatpak_commands(self, action: str) -> list:
+        """Official install route from Amethyst's README: its own Flatpak remote, user scope.
+
+        The 32-bit compat extensions aren't installed here - Amethyst adds
+        them itself on first launch, and they come from Flathub, which on
+        SteamOS is a system remote, not a user one.
+        """
+        flags = ["--user", "-y", "--noninteractive"]
+        if action == "update":
+            return [["flatpak", "update", *flags, FLATPAK_ID]]
+        return [
+            ["flatpak", "remote-add", "--user", "--if-not-exists", REMOTE_NAME, REMOTE_URL],
+            ["flatpak", "install", *flags, REMOTE_NAME, f"{FLATPAK_ID}//stable"],
+        ]
+
+    async def _run_job(self, cmds: list):
+        rc = 0
         try:
-            proc = await asyncio.create_subprocess_exec(
-                *args, stdin=asyncio.subprocess.DEVNULL,
-                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
-                env=_user_env())
-            assert proc.stdout is not None
-            async for raw in proc.stdout:
-                line = raw.decode(errors="replace").rstrip()
-                if not line:
-                    continue
-                self.job_log.append(line)
-                self.job_log = self.job_log[-200:]
-                await decky.emit("amethyst_log", line)
-            rc = await proc.wait()
+            for args in cmds:
+                decky.logger.info("job: %s", " ".join(args))
+                await self._log(f"$ {' '.join(args[:4])}{' …' if len(args) > 4 else ''}")
+                proc = await asyncio.create_subprocess_exec(
+                    *args, stdin=asyncio.subprocess.DEVNULL,
+                    stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+                    env=_user_env())
+                assert proc.stdout is not None
+                buf = b""
+                # flatpak redraws progress with \r, so split on both
+                while chunk := await proc.stdout.read(4096):
+                    buf += chunk
+                    *lines, buf = re.split(rb"[\r\n]", buf)
+                    for raw in lines:
+                        line = raw.decode(errors="replace").rstrip()
+                        if line:
+                            await self._log(line)
+                if buf.strip():
+                    await self._log(buf.decode(errors="replace").rstrip())
+                rc = await proc.wait()
+                if rc != 0:
+                    break
             self.job_state.update(running=False, ok=(rc == 0), rc=rc)
         except Exception as e:
             decky.logger.exception("job failed")
             self.job_log.append(f"Error: {e}")
             self.job_state.update(running=False, ok=False, rc=-1)
         await decky.emit("amethyst_done", self.job_state)
+
+    async def _log(self, line: str):
+        # progress bars spam near-identical lines; replace rather than append
+        strip = lambda s: re.sub(r"[\d.%\s/]+", "", s)[:30]
+        if self.job_log and "%" in line and strip(line) == strip(self.job_log[-1]):
+            self.job_log[-1] = line
+        else:
+            self.job_log.append(line)
+            self.job_log = self.job_log[-200:]
+        await decky.emit("amethyst_log", line)
 
     async def job_status(self) -> dict:
         return {**self.job_state, "log": self.job_log[-20:]}

@@ -109,7 +109,14 @@ function Content() {
     if (!cache) refresh();
     jobStatus().then(setJob);
     const onLog = addEventListener<[string]>("amethyst_log", (line) =>
-      setJob((j) => ({ ...j, running: true, log: [...j.log, line].slice(-20) })));
+      setJob((j) => {
+        const last = j.log[j.log.length - 1];
+        // collapse flatpak progress redraws into one line
+        const strip = (s: string) => s.replace(/[\d.%\s/]+/g, "").slice(0, 30);
+        const log = last && line.includes("%") && strip(last) === strip(line)
+          ? [...j.log.slice(0, -1), line] : [...j.log, line];
+        return { ...j, running: true, log: log.slice(-20) };
+      }));
     const onDone = addEventListener<[JobStatus]>("amethyst_done", (s) => {
       setJob((j) => ({ ...j, ...s, log: j.log }));
       if (s.ok) refresh(); // pick up new deploy state
@@ -138,6 +145,46 @@ function Content() {
       setJob({ running: false, ok: false, log: [r.error ?? "failed"] });
     }
   };
+
+  const manage = async (action: "install" | "update") => {
+    setJob({ action, running: true, log: [] });
+    const r = await startJob(action, "", "");
+    if (!r.ok) setJob({ running: false, ok: false, log: [r.error ?? "failed"] });
+  };
+
+  const logPanel = (busy || job.log.length > 0) && (
+    <PanelSection title={busy ? `Running ${job.action ?? ""}…` : job.ok ? "Done" : "Failed"}>
+      <PanelSectionRow>
+        <div style={{
+          fontFamily: "monospace", fontSize: 10, whiteSpace: "pre-wrap",
+          wordBreak: "break-word", maxHeight: 160, overflowY: "auto", opacity: 0.85,
+        }}>
+          {job.log.slice(-8).join("\n") || "Starting…"}
+        </div>
+      </PanelSectionRow>
+    </PanelSection>
+  );
+
+  if (data && !data.ok && data.kind === "none") {
+    return (
+      <>
+        <PanelSection title="Amethyst">
+          <PanelSectionRow>
+            <div style={{ fontSize: 13 }}>
+              Amethyst Mod Manager isn't installed. This installs the official Flatpak
+              from the developer's repo.
+            </div>
+          </PanelSectionRow>
+          <PanelSectionRow>
+            <ButtonItem layout="below" onClick={() => manage("install")} disabled={busy}>
+              {busy ? "Installing…" : "Install Amethyst"}
+            </ButtonItem>
+          </PanelSectionRow>
+        </PanelSection>
+        {logPanel}
+      </>
+    );
+  }
 
   if (!data && loading) {
     return (
@@ -171,7 +218,8 @@ function Content() {
       <PanelSection title="Amethyst">
         <PanelSectionRow>
           <div style={{ fontSize: 13 }}>
-            No configured games yet. Set one up in Amethyst in Desktop Mode first.
+            Amethyst is installed, but no games are set up yet. Open it once in Desktop Mode
+            to point it at a game, log in to Nexus and create a profile.
           </div>
         </PanelSectionRow>
         <PanelSectionRow>
@@ -239,20 +287,16 @@ function Content() {
             {loading ? "Refreshing…" : "Refresh games"}
           </ButtonItem>
         </PanelSectionRow>
+        {data?.kind === "flatpak" && (
+          <PanelSectionRow>
+            <ButtonItem layout="below" disabled={busy} onClick={() => manage("update")}>
+              Update Amethyst
+            </ButtonItem>
+          </PanelSectionRow>
+        )}
       </PanelSection>
 
-      {(busy || job.log.length > 0) && (
-        <PanelSection title={busy ? `Running ${job.action ?? ""}…` : job.ok ? "Done" : "Failed"}>
-          <PanelSectionRow>
-            <div style={{
-              fontFamily: "monospace", fontSize: 10, whiteSpace: "pre-wrap",
-              wordBreak: "break-word", maxHeight: 160, overflowY: "auto", opacity: 0.85,
-            }}>
-              {job.log.slice(-8).join("\n") || "Starting…"}
-            </div>
-          </PanelSectionRow>
-        </PanelSection>
-      )}
+      {logPanel}
     </>
   );
 }
@@ -260,7 +304,9 @@ function Content() {
 export default definePlugin(() => {
   // Global listener: finish-up work happens even if the QAM panel is closed.
   const done = addEventListener<[JobStatus]>("amethyst_done", (s) => {
-    const label = s.action === "restore" ? `${s.game}: restored` : `${s.game} / ${s.profile}`;
+    const label = s.action === "install" ? "Amethyst installed"
+      : s.action === "update" ? "Amethyst updated"
+      : s.action === "restore" ? `${s.game}: restored` : `${s.game} / ${s.profile}`;
     toaster.toast({
       title: s.ok ? "Amethyst: done" : "Amethyst: failed",
       body: s.ok ? label : `${label} - open the plugin for the log`,

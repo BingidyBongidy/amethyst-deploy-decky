@@ -10,8 +10,11 @@ Installing mods, collections and load order still happen in the Amethyst GUI in 
 
 ## Requirements
 
-- Amethyst installed as the Flatpak (recommended) or the AppImage in `~/Applications`
-- At least one game configured in Amethyst, with a profile
+- Amethyst as the Flatpak or the AppImage in `~/Applications`. If neither is found, the
+  plugin offers to install the official Flatpak from the developer's own remote, and
+  shows an **Update Amethyst** button once it's there.
+- At least one game configured in Amethyst, with a profile. First-time setup (game path,
+  Nexus login, installing mods) is done in the Amethyst GUI in Desktop Mode.
 
 ## Install
 
