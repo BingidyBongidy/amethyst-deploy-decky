@@ -39,3 +39,7 @@ Package `plugin.json`, `package.json`, `main.py`, `LICENSE`, `defaults/amethyst_
 - With the Flatpak, `amethyst_snapshot.py` runs inside Amethyst's own Python to get
   every game's profiles, deploy state and Steam app ID in one call.
 - The frontend launches the game via `SteamClient.Apps.RunGame` once a deploy succeeds.
+
+## Licence
+
+GPL-3.0-or-later, matching Amethyst Mod Manager.
