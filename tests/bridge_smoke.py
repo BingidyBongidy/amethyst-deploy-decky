@@ -52,6 +52,10 @@ assert any(f["looks_like_game"] for f in b["folders"]) and not b["looks_like_gam
 # A folder chosen by hand that isn't the game asks first; force uses it anyway.
 r, e = call("configure_game", game="Fallout 3", path="/tmp/bhome/Downloads"); print("manual wrong:", r, e)
 assert r["needs_confirm"] and not r["configured"], r
+# Picking a huge folder (Home) stops at the search budget instead of crawling it.
+import time as _t; t0 = _t.time()
+r, e = call("configure_game", game="Fallout 3", path="/tmp/bhome"); print("manual home:", r and r.get("needs_confirm"), round(_t.time() - t0, 2), "s", e)
+assert r["needs_confirm"] and _t.time() - t0 < 10, r
 # Choosing the top folder by hand is fine: the resolver finds the language folder below it.
 r, e = call("configure_game", game="Fallout 3", path=fo3_root); print("manual top:", r["path"], e)
 assert r["configured"] and r["path"].endswith("Fallout 3 GOTY English"), r

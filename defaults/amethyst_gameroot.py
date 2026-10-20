@@ -23,7 +23,10 @@ _LANGUAGES = (("en", "eng", "english"), ("fr", "fra", "french", "francais"),
               ("ru", "rus", "russian"), ("pt", "por", "portuguese", "brazilian"),
               ("ja", "jpn", "japanese"), ("zh", "chi", "chinese"), ("ko", "kor", "korean"))
 
-_MAX_DIRS = 400   # don't crawl huge folders (a whole library) looking for a root
+_MAX_DIRS = 400      # subfolders listed per folder
+_SEARCH_BUDGET = 300 # folders checked below a root in total; a game is never deeper
+                     # than a couple of levels, so a bigger folder (Home, an SD card,
+                     # a whole library) was simply the wrong pick
 
 
 def language(text: str) -> "str | None":
@@ -35,18 +38,27 @@ def language(text: str) -> "str | None":
     return None
 
 
+def _listing(folder: Path, cache: dict) -> dict:
+    """{lowercase name: entry} for *folder*, read once per check."""
+    if folder not in cache:
+        try:
+            cache[folder] = {c.name.lower(): c for c in folder.iterdir()}
+        except OSError:
+            cache[folder] = {}
+    return cache[folder]
+
+
 def has_marker(folder: Path, markers: list[str]) -> bool:
-    """True if any marker path exists under *folder* (case-insensitive)."""
+    """True if any marker path exists under *folder* (case-insensitive). Each
+    directory is listed once, however many markers share it."""
+    cache: dict = {}
     for marker in markers:
         cur: "Path | None" = folder
         for part in [p for p in marker.replace("\\", "/").split("/") if p]:
-            try:
-                cur = next((c for c in cur.iterdir() if c.name.lower() == part.lower()), None)
-            except OSError:
-                cur = None
+            cur = _listing(cur, cache).get(part.lower())
             if cur is None:
                 break
-        if cur is not None and cur.exists():
+        if cur is not None:
             return True
     return False
 
@@ -84,9 +96,14 @@ def resolve(root: Path, markers: list[str], languages: "list[str] | None" = None
         return root, True
     if has_marker(root, markers):
         return root, True
-    level = [root]
+    level, budget = [root], _SEARCH_BUDGET
     for _ in range(depth):
-        level = [d for parent in level for d in subdirs(parent)]
+        below: list[Path] = []
+        for parent in level:
+            below += subdirs(parent)
+            if len(below) > budget:
+                return root, False
+        level, budget = below, budget - len(below)
         hits = [d for d in level if has_marker(d, markers)]
         if hits:
             return (hits[0] if len(hits) == 1 else _pick(root, hits, languages)), True

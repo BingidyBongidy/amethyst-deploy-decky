@@ -78,8 +78,15 @@ class Nexus:
                 self._user = api.validate()
                 self._checked = time.time()
             except Exception as e:
-                self._api = self._user = None
-                return {"logged_in": False, "error": f"Nexus rejected the saved login: {e}"}
+                if getattr(e, "status_code", 0) in (401, 403):
+                    # Nexus said no: the saved login is revoked or expired.
+                    self._api = self._user = None
+                    return {"logged_in": False, "error": f"Nexus rejected the saved login: {e}"}
+                # Offline, timeout or a Nexus outage: keep the login, say why.
+                if self._user is not None:
+                    return {**self._info(self._user), "error": f"Couldn't reach Nexus: {e}"}
+                return {"logged_in": True, "name": "", "premium": False,
+                        "error": f"Couldn't reach Nexus to check your login: {e}"}
         return self._info(self._user)
 
     @staticmethod

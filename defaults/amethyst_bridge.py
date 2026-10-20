@@ -866,12 +866,16 @@ class Bridge:
         return self.taskmgr.start(task, lambda t: self.nexus.download_install(
             t, g, pdir, mod_id, file_id, GAME_LOCK))
 
+    @unlocked
     def nexus_manual_install(self, game: str, profile: str, mod_id: int, file_id: int,
                              title: str = ""):
         """Free accounts. Returns {task, url}: open url (the file's Nexus download
         page) in Steam's browser; the task installs the file once it's in
-        Downloads. url is "" when it's already downloaded (installs straight away)."""
-        g, pdir = self._task_target(game, profile)
+        Downloads. url is "" when it's already downloaded (installs straight away).
+        Unlocked: it waits on a Nexus lookup, so only the profile lookup takes
+        GAME_LOCK."""
+        with GAME_LOCK:
+            g, pdir = self._task_target(game, profile)
         task = Task(self.taskmgr, "nexus", title or f"Nexus mod {mod_id}", game, profile)
         box: dict = {}
         ready = threading.Event()

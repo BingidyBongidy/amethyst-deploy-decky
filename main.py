@@ -146,9 +146,12 @@ class BridgeClient:
             if self.proc is proc:   # died on its own, not stop()
                 await decky.emit("amethyst_event", "bridge_stopped", {})
 
+    def alive(self) -> bool:
+        return self.proc is not None and self.proc.returncode is None
+
     async def busy(self) -> bool:
         """True while the helper has an install or download in progress."""
-        if self.proc is None or self.proc.returncode is not None:
+        if not self.alive():
             return False
         try:
             resp = await self.call("tasks", {}, 10)
@@ -175,10 +178,17 @@ class BridgeClient:
         rid = self.next_id
         fut = asyncio.get_event_loop().create_future()
         self.pending[rid] = fut
-        async with self.write_lock:
-            proc.stdin.write((json.dumps({"id": rid, "method": method,
-                                          "params": params}) + "\n").encode())
-            await proc.stdin.drain()
+        try:
+            async with self.write_lock:
+                proc.stdin.write((json.dumps({"id": rid, "method": method,
+                                              "params": params}) + "\n").encode())
+                await proc.stdin.drain()
+        except (BrokenPipeError, ConnectionResetError) as e:
+            # It died after the start check: drop it so the next call starts a fresh one.
+            self.pending.pop(rid, None)
+            decky.logger.warning("bridge write failed: %s", e)
+            await self.stop()
+            raise RuntimeError("Amethyst's helper stopped unexpectedly. Try again.") from e
         try:
             return await asyncio.wait_for(fut, timeout)
         finally:
@@ -200,10 +210,11 @@ class Plugin:
             return {"ok": False, "error": f"Unknown action {method}"}
         if self.job and not self.job.done():
             return {"ok": False, "error": "Wait for the current deploy/install to finish."}
-        if not await self._flatpak_installed():
-            return {"ok": False, "error": "The full UI needs Amethyst's Flatpak. Install it from the plugin menu."}
         if self.bridge is None:
             self.bridge = BridgeClient()
+        # A running helper proves the Flatpak is there; only check before starting it.
+        if not self.bridge.alive() and not await self._flatpak_installed():
+            return {"ok": False, "error": "The full UI needs Amethyst's Flatpak. Install it from the plugin menu."}
         try:
             resp = await self.bridge.call(method, params or {}, BRIDGE_METHODS[method])
         except asyncio.TimeoutError:

@@ -63,9 +63,10 @@ class Task:
         self.mgr.emit("task", self.public())
 
     def log(self, msg):
+        """Kept with the task; only a failure's last lines reach the Decky log
+        (installs log hundreds of lines)."""
         self.log_lines.append(str(msg))
         del self.log_lines[:-200]
-        self.mgr.log(f"[{self.title}] {msg}")
 
     def set_step(self, step: str, progress=None):
         self.check()
@@ -132,6 +133,9 @@ class TaskManager:
             except Exception as e:
                 traceback.print_exc()
                 task.state, task.error = "error", f"{type(e).__name__}: {e}"
+            if task.state == "error":
+                tail = "\n  ".join(task.log_lines[-15:])
+                self.log(f"task '{task.title}' failed: {task.error}" + (f"\n  {tail}" if tail else ""))
             task.choice = None
             task.fomod = None
             task.emit()
@@ -238,7 +242,7 @@ def install_archive_flow(task: Task, g, profile_dir: Path, archive: Path, *,
 def strip_markup(text: str, limit=6000) -> str:
     """HTML/BBCode to plain text, for Nexus descriptions and FOMOD options."""
     text = re.sub(r"(?i)<br\s*/?>|\[/?(p|line)\]", "\n", text or "")
-    text = re.sub(r"<[^>]+>|\[/?[a-z*]+(=[^\]]*)?\]", "", text)
+    text = re.sub(r"<[^>]+>|\[/?[a-z*]+(=[^\]]*)?\]", "", text, flags=re.I)
     text = html.unescape(text)
     return re.sub(r"\n{3,}", "\n\n", text).strip()[:limit]
 

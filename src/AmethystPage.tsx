@@ -87,7 +87,7 @@ function BaseGameMissing({ game }: { game: string }) {
   useEffect(() => {
     bridge<FolderCheck>("game_folder_check", { game }).then(setInfo, () => {});
   }, [game]);
-  if (!info) return null;
+  if (!info || info.expected.length === 0) return null;   // game has no base-game plugin list
   return (
     <div className="amd-warn" style={{ padding: "4px 14px 10px", whiteSpace: "normal", lineHeight: 1.5 }}>
       <div><FaExclamationTriangle /> The base game's files ({info.expected.join(", ")}) weren't found, so every
