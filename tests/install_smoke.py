@@ -5,7 +5,7 @@ Run after tests/make_fake_home.sh (and after bridge_smoke.py, which sets up
 Skyrim SE):  AMETHYST_SRC=../amethyst/src python3 tests/install_smoke.py
 Set SKIP_NETWORK=1 to leave out the Thunderstore and Nexus parts.
 """
-import json, os, subprocess, sys, time, urllib.request, urllib.parse
+import json, os, subprocess, sys, time
 
 here = os.path.dirname(os.path.abspath(__file__))
 # Like inside Amethyst's Flatpak: XDG_* point into the sandbox, not the host dirs.

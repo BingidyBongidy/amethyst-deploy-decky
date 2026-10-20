@@ -252,7 +252,7 @@ class Plugin:
     async def _install(self) -> dict:
         if await self._flatpak_installed():
             return {"kind": "flatpak",
-                    "cli": ["flatpak", "run", f"--command=amethyst-mod-manager-cli", FLATPAK_ID]}
+                    "cli": ["flatpak", "run", "--command=amethyst-mod-manager-cli", FLATPAK_ID]}
         appimage = self._find_appimage()
         if appimage:
             return {"kind": "appimage", "cli": [appimage]}
