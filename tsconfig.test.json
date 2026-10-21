@@ -1,0 +1,8 @@
+{
+  // Used by vitest's typecheck (vitest.config.ts). The plugin's own tsconfig.json
+  // type-checks the same files; this adds skipLibCheck because vite's bundled
+  // .d.ts files need "bundler" module resolution.
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "skipLibCheck": true },
+  "include": ["src"]
+}
