@@ -1,6 +1,6 @@
 {
   "name": "amethyst-deploy",
-  "version": "0.3.0",
+  "version": "0.1.0",
   "description": "Decky plugin: deploy Amethyst Mod Manager profiles from Gaming Mode",
   "type": "module",
   "scripts": {
