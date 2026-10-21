@@ -9,8 +9,11 @@ import { NexusLogin } from "./NexusLogin";
 
 // ---------- module-level memory (survives tab switches) ----------
 
-/** Last source picked, per game. */
-const sourceByGame = new Map<string, Source>();
+/** What the site picker shows: a mod site, or "Other sites" (the Downloads tab). */
+type View = Source | "other";
+
+/** Last view picked, per game. */
+const sourceByGame = new Map<string, View>();
 
 type Browse = {
   /** query|sort these results are for; null = nothing loaded yet. */
@@ -35,22 +38,33 @@ async function fetchPage(src: Source, game: string, query: string, sort: string,
   return { more: r.more, items: r.mods.map((card): Item => ({ src: "ts", key: `t${card.namespace}/${card.name}`, card })) };
 }
 
+type GetModsProps = TabProps & {
+  /** Switch the page to the Downloads tab (from "Other sites"). */
+  onOpenDownloads?: () => void;
+};
+
 /** Browse, search and install from Nexus Mods (Premium) and Thunderstore. */
-export function GetModsTab(props: TabProps) {
+export function GetModsTab(props: GetModsProps) {
   // Remount per game so every piece of state starts fresh.
   return <GetMods key={props.game.name} {...props} />;
 }
 
-function GetMods({ game, profile, locked }: TabProps) {
-  const sources: Source[] = [...(game.ts_community ? ["ts" as const] : []), ...(game.nexus_domain ? ["nexus" as const] : [])];
-  const [src, setSrcState] = useState<Source>(() => {
+// Baldur's Gate 3's official mod site is mod.io, browsed from inside the game.
+const isBG3 = (domain: string) => domain === "baldursgate3";
+
+function GetMods({ game, profile, locked, onOpenDownloads }: GetModsProps) {
+  const available: Record<Source, boolean> = { nexus: !!game.nexus_domain, ts: !!game.ts_community };
+  const [view, setViewState] = useState<View>(() => {
     const kept = sourceByGame.get(game.name);
-    return kept && sources.includes(kept) ? kept : sources[0] ?? "nexus";
+    if (kept) return kept;
+    return available.ts ? "ts" : available.nexus ? "nexus" : "other";
   });
-  const setSrc = (s: Source) => {
-    sourceByGame.set(game.name, s);
-    setSrcState(s);
+  const setView = (v: View) => {
+    sourceByGame.set(game.name, v);
+    setViewState(v);
   };
+  // The mod site being browsed, if the picked view is one this game is on.
+  const src: Source | null = view !== "other" && available[view] ? view : null;
 
   // Nexus account (the bridge caches nexus_status, so asking on every mount is cheap)
   const [nexus, setNexus] = useState<NexusStatus | null>(null);
@@ -82,23 +96,20 @@ function GetMods({ game, profile, locked }: TabProps) {
   const [open, setOpen] = useState<Item | null>(null);
   const [focusKey, setFocusKey] = useState<string | null>(null);
 
+  const notHere = (s: Source) => (available[s] ? "" : " (not for this game)");
   const header = (
     <Focusable className="amd-bar" flow-children="horizontal" style={{ flexWrap: "wrap" }}>
-      {sources.length > 1 && (
-        <div style={{ minWidth: 220 }}>
-          <Dropdown
-            rgOptions={[
-              { data: "ts", label: "Source: Thunderstore" },
-              { data: "nexus", label: "Source: Nexus Mods" },
-            ]}
-            selectedOption={src}
-            onChange={(o) => { setOpen(null); setSrc(o.data); }}
-          />
-        </div>
-      )}
-      {sources.length === 1 && (
-        <span style={{ fontWeight: 600, paddingLeft: 14 }}>{src === "nexus" ? "Nexus Mods" : "Thunderstore"}</span>
-      )}
+      <div style={{ minWidth: 260 }}>
+        <Dropdown
+          rgOptions={[
+            { data: "nexus", label: `Site: Nexus Mods${notHere("nexus")}` },
+            { data: "ts", label: `Site: Thunderstore${notHere("ts")}` },
+            { data: "other", label: "Site: Other sites" },
+          ]}
+          selectedOption={view}
+          onChange={(o) => { setOpen(null); setView(o.data); }}
+        />
+      </div>
       {src === "nexus" && nexus?.logged_in && (
         <>
           <span className="amd-sub">
@@ -108,11 +119,22 @@ function GetMods({ game, profile, locked }: TabProps) {
         </>
       )}
       {locked && <span className="amd-warn">A deploy is running. Installs are paused.</span>}
+      {isBG3(game.nexus_domain) && view !== "other" && (
+        <span className="amd-sub" style={{ flexBasis: "100%", paddingLeft: 2 }}>
+          mod.io mods for {game.name} are in the game's own Mod Manager (main menu).
+        </span>
+      )}
     </Focusable>
   );
 
   let body;
-  if (src === "nexus" && !nexus?.logged_in) {
+  if (view === "other") {
+    body = <OtherSites game={game.name} bg3={isBG3(game.nexus_domain)} onOpenDownloads={onOpenDownloads} />;
+  } else if (!src) {
+    body = <NotOnSite game={game.name} site={view} onOther={() => setView("other")}
+      onSwitch={available.nexus ? () => setView("nexus") : available.ts ? () => setView("ts") : undefined}
+      switchLabel={available.nexus ? "Browse Nexus Mods" : "Browse Thunderstore"} />;
+  } else if (src === "nexus" && !nexus?.logged_in) {
     body = nexusError ? (
       <Focusable flow-children="vertical">
         <Note>{nexusError}</Note>
@@ -332,5 +354,51 @@ function CardBody({ it }: { it: Item }) {
           : <span><FaStar /> {compact(it.card.rating)}</span>}
       </div>
     </>
+  );
+}
+
+const SITE_NAMES: Record<Source, string> = { nexus: "Nexus Mods", ts: "Thunderstore" };
+
+/** The picked site doesn't have this game: say so instead of showing nothing. */
+function NotOnSite({ game, site, onOther, onSwitch, switchLabel }: {
+  game: string; site: Source; onOther: () => void; onSwitch?: () => void; switchLabel: string;
+}) {
+  const why = site === "ts"
+    ? "Thunderstore only has mods for some games, mostly ones modded with BepInEx (Valheim, Lethal Company, Risk of Rain 2, Subnautica and others)."
+    : "Amethyst doesn't know a Nexus Mods page for this game.";
+  return (
+    <Focusable flow-children="vertical" style={{ display: "flex", flexDirection: "column", gap: 10, padding: "8px 14px" }}>
+      <div style={{ fontSize: 16, fontWeight: 600 }}>{game} isn't on {SITE_NAMES[site]}</div>
+      <div className="amd-sub" style={{ whiteSpace: "normal" }}>{why}</div>
+      <Focusable flow-children="horizontal" style={{ display: "flex", gap: 10 }}>
+        {onSwitch && <DialogButton style={{ width: "auto", minWidth: 200 }} onClick={onSwitch}>{switchLabel}</DialogButton>}
+        <DialogButton style={{ width: "auto", minWidth: 200 }} onClick={onOther}>Other sites</DialogButton>
+      </Focusable>
+    </Focusable>
+  );
+}
+
+/** Mods from anywhere else go through the Downloads tab. */
+function OtherSites({ game, bg3, onOpenDownloads }: { game: string; bg3: boolean; onOpenDownloads?: () => void }) {
+  return (
+    <Focusable flow-children="vertical" style={{ display: "flex", flexDirection: "column", gap: 10, padding: "8px 14px" }}>
+      <div style={{ fontSize: 16, fontWeight: 600 }}>Mods from other sites</div>
+      <div className="amd-sub" style={{ whiteSpace: "normal", fontSize: 14, lineHeight: 1.5 }}>
+        Any mod archive (.zip, .7z, .rar) can be installed, wherever it comes from: ModDB, GitHub, a mod's own
+        page and so on. Save it to your Downloads folder, from Steam's browser or by copying it over, then open
+        the Downloads tab and press A on it. Installer options (FOMOD) show up here as usual.
+      </div>
+      {bg3 && (
+        <div className="amd-warn" style={{ whiteSpace: "normal", fontSize: 14, lineHeight: 1.5 }}>
+          {game}: mods from mod.io, the game's official mod site, are installed from the game itself.
+          Start the game and open Mod Manager from the main menu. They work alongside the mods installed here.
+        </div>
+      )}
+      {onOpenDownloads && (
+        <DialogButton style={{ width: "auto", alignSelf: "flex-start", minWidth: 220 }} onClick={onOpenDownloads}>
+          Open the Downloads tab
+        </DialogButton>
+      )}
+    </Focusable>
   );
 }

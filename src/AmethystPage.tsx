@@ -422,10 +422,11 @@ export function AmethystPage() {
         id: "plugins", title: "Load order",
         content: ctx ? <PluginsTab {...ctx} loot={current.loot} /> : needProfile,
       }] : []),
-      ...(current && (current.nexus_domain || current.ts_community) ? [{
+      {
         id: "get", title: "Get mods",
-        content: ctx && current ? <GetModsTab game={current} profile={ctx.profile} locked={busy} reload={reload} /> : needProfile,
-      }] : []),
+        content: ctx && current ? <GetModsTab game={current} profile={ctx.profile} locked={busy} reload={reload}
+          onOpenDownloads={() => setTab("downloads")} /> : needProfile,
+      },
       {
         id: "downloads", title: "Downloads",
         content: ctx && current ? <DownloadsTab game={current} profile={ctx.profile} locked={busy} reload={reload} /> : needProfile,
