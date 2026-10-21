@@ -1,15 +1,15 @@
 """Find and check a game's root folder, whatever launcher installed it.
 
 A launcher reports where it put a game, but that isn't always the folder
-Amethyst needs (the one holding the game's exe and, for Bethesda games, the
-Data folder with the base game's plugins). Stores nest games a level down,
-and Epic's "Selective Downloads" titles (Fallout 3 GOTY, Fallout: New Vegas,
-...) hold one full copy per language ("Fallout 3 GOTY English", "... French")
-under a top-level Launcher.exe.
+Amethyst needs (the one holding the game's exe and, when the handler lists
+base-game plugins, the Data folder with them). Stores nest games a level
+down, and some store installs hold one full copy per language
+("<Game> English", "<Game> French", ...) under a top-level launcher.
 
-*markers* are paths relative to a game root that prove it is one: the game's
-exe names (as Amethyst's handler lists them, sub-paths allowed) and, for
-Bethesda games, "Data/<base plugin>". Matching is case-insensitive.
+Nothing here knows about particular games: *markers* come from Amethyst's
+handler for the game. They are paths relative to a game root that prove it is
+one: the handler's exe names (sub-paths allowed) and "Data/<base plugin>" for
+each base-game plugin it lists. Matching is case-insensitive.
 """
 from __future__ import annotations
 

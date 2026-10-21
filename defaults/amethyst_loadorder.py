@@ -1,4 +1,4 @@
-"""Load order RPCs (the Load order tab, Bethesda-style games): list plugins,
+"""Load order RPCs (the Load order tab, for games whose handler has plugin files): list plugins,
 enable/disable and move them, sort with LOOT, and check where the base game's
 plugins should be. Uses the same Qt-free code as Amethyst's GUI."""
 from __future__ import annotations

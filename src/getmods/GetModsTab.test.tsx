@@ -72,16 +72,11 @@ describe("GetModsTab: Other sites", () => {
     expect(onOpenDownloads).toHaveBeenCalledTimes(1);
   });
 
-  it("has the mod.io note for Baldur's Gate 3", async () => {
+  it("treats every game the same: no notes about particular games", async () => {
     onBridge("nexus_status", () => ({ logged_in: false }));
     renderTab(freshGame({ name: "Baldur's Gate 3", nexus_domain: "baldursgate3", ts_community: "" }));
     await settle();
     choose(sitePicker(), "Site: Other sites");
-    expect(screen.getByText(/mods from mod\.io, the game's official mod site/)).toBeTruthy();
-  });
-
-  it("has no mod.io note for other games", () => {
-    renderTab(freshGame(NEITHER));
     expect(screen.queryByText(/mod\.io/)).toBeNull();
   });
 });

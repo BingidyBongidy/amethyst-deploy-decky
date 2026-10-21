@@ -108,8 +108,9 @@ def find(exe_names: list[str], app_names: list[str], rows: "list[Row] | None" = 
          legendary: "dict | None" = None, markers: "list[str] | None" = None):
     """(install root, Row, matched exe or None) for a game, or None. Pass
     *rows* / *legendary* when checking many games, to read the files once.
-    *markers* are extra relative paths that identify the game root, such as
-    "Data/Fallout3.esm", for installs whose exe isn't one Amethyst knows.
+    *markers* are extra relative paths that identify the game root (the
+    handler's "Data/<base plugin>"), for installs whose exe isn't one the
+    handler lists.
 
     When the handler declares store app names (Amethyst's heroic_app_names:
     Epic appNames and GOG product ids) only those match, like Amethyst's own

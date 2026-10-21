@@ -25,9 +25,6 @@ export function GetModsTab(props: GetModsProps) {
   return <GetMods key={props.game.name} {...props} />;
 }
 
-// Baldur's Gate 3's official mod site is mod.io, browsed from inside the game.
-const isBG3 = (domain: string) => domain === "baldursgate3";
-
 type Available = Record<Source, boolean>;
 
 /** Thunderstore first: a game on it is usually modded from there. */
@@ -112,7 +109,7 @@ function GetMods({ game, profile, locked, onOpenDownloads }: GetModsProps) {
 
   const body = () => {
     if (site.view === "other") {
-      return <OtherSites game={game.name} bg3={isBG3(game.nexus_domain)} onOpenDownloads={onOpenDownloads} />;
+      return <OtherSites onOpenDownloads={onOpenDownloads} />;
     }
     if (!site.src) {
       return <NotOnSite game={game.name} site={site.view} onOther={() => site.setView("other")}
@@ -130,7 +127,7 @@ function GetMods({ game, profile, locked, onOpenDownloads }: GetModsProps) {
 
   return (
     <Focusable flow-children="vertical" className="amd-stack">
-      <SiteBar game={game} view={site.view} available={site.available} onPick={pickView} locked={locked}
+      <SiteBar view={site.view} available={site.available} onPick={pickView} locked={locked}
         account={site.src === "nexus" ? nexus.status : null} onLogout={nexus.logout} />
       {body()}
     </Focusable>
@@ -146,9 +143,9 @@ function NexusSignIn({ nexus, locked }: { nexus: NexusAccount; locked: boolean }
   return <NexusLogin status={nexus.status} onStatus={nexus.setStatus} />;
 }
 
-/** Site picker, the Nexus account (when browsing Nexus), and notes about the deploy lock and BG3. */
-function SiteBar({ game, view, available, onPick, locked, account, onLogout }: {
-  game: BridgeGame; view: View; available: Available; onPick: (view: View) => void; locked: boolean;
+/** Site picker, the Nexus account (when browsing Nexus), and the deploy-lock note. */
+function SiteBar({ view, available, onPick, locked, account, onLogout }: {
+  view: View; available: Available; onPick: (view: View) => void; locked: boolean;
   /** The Nexus account while browsing Nexus, else null. */
   account: NexusStatus | null;
   onLogout: () => void;
@@ -176,11 +173,6 @@ function SiteBar({ game, view, available, onPick, locked, account, onLogout }: {
         </>
       )}
       {locked && <span className="amd-warn">A deploy is running. Installs are paused.</span>}
-      {isBG3(game.nexus_domain) && view !== "other" && (
-        <span className="amd-sub amd-full-row">
-          mod.io mods for {game.name} are in the game's own Mod Manager (main menu).
-        </span>
-      )}
     </Focusable>
   );
 }

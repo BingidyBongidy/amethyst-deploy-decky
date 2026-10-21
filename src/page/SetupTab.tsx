@@ -157,8 +157,7 @@ function DetectedGames({ rows, error, anyReady, disabled, setup }: {
           ? "No other supported games found."
           : "No supported games found."}{" "}
         It looks in Steam, Heroic, Unifideck, Lutris, Faugus, Bottles and your non-Steam shortcuts, for
-        games Amethyst supports (Bethesda games, Cyberpunk 2077, Stardew Valley, Baldur's Gate 3, Balatro and
-        others). If a game you have isn't listed, set it up by hand below.
+        the games Amethyst supports. If a game you have isn't listed, set it up by hand below.
       </Note>
     );
   }

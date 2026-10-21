@@ -5,9 +5,8 @@ import { SITE_NAMES, Source } from "./common";
 export function NotOnSite({ game, site, onOther, onSwitch, switchLabel }: {
   game: string; site: Source; onOther: () => void; onSwitch?: () => void; switchLabel: string;
 }) {
-  const why = site === "ts"
-    ? "Thunderstore only has mods for some games, mostly ones modded with BepInEx (Valheim, Lethal Company, Risk of Rain 2, Subnautica and others)."
-    : "Amethyst doesn't know a Nexus Mods page for this game.";
+  // Which sites a game is on comes from Amethyst's handler for it.
+  const why = `Amethyst doesn't link this game to ${SITE_NAMES[site]}.`;
   return (
     <Focusable flow-children="vertical" className="amd-section">
       <div className="amd-title">{game} isn't on {SITE_NAMES[site]}</div>
@@ -21,7 +20,7 @@ export function NotOnSite({ game, site, onOther, onSwitch, switchLabel }: {
 }
 
 /** Mods from anywhere else go through the Downloads tab. */
-export function OtherSites({ game, bg3, onOpenDownloads }: { game: string; bg3: boolean; onOpenDownloads?: () => void }) {
+export function OtherSites({ onOpenDownloads }: { onOpenDownloads?: () => void }) {
   return (
     <Focusable flow-children="vertical" className="amd-section">
       <div className="amd-title">Mods from other sites</div>
@@ -30,12 +29,6 @@ export function OtherSites({ game, bg3, onOpenDownloads }: { game: string; bg3: 
         page and so on. Save it to your Downloads folder, from Steam's browser or by copying it over, then open
         the Downloads tab and press A on it. Installer options (FOMOD) show up here as usual.
       </div>
-      {bg3 && (
-        <div className="amd-warn amd-prose">
-          {game}: mods from mod.io, the game's official mod site, are installed from the game itself.
-          Start the game and open Mod Manager from the main menu. They work alongside the mods installed here.
-        </div>
-      )}
       {onOpenDownloads && (
         <DialogButton className="amd-button-auto amd-self-start amd-min-220" onClick={onOpenDownloads}>
           Open the Downloads tab

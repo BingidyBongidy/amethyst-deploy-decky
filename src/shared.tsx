@@ -140,7 +140,7 @@ export const takePendingLaunch = () => {
   return id;
 };
 
-/** "Fallout 4: GOTY" -> "fallout4goty", for loose name matching. */
+/** "Some Game: GOTY" -> "somegamegoty", for loose name matching. */
 const normalizeName = (name: string) => name.toLowerCase().replace(/[^a-z0-9]/g, "");
 
 /**

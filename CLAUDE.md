@@ -31,6 +31,10 @@ state, next steps and how to test.
   Agreed exceptions (2026-10-19), both on Nexus pages in Steam's browser with the
   trackpad: logging in to Nexus (sign in once, press Authorize), and free accounts
   pressing "Slow download", one click per file.
+- Game-agnostic: no code, text or tests that single out a particular game. Behaviour
+  comes from what Amethyst's handler declares (exe names, base plugins, Nexus domain,
+  Thunderstore community, Steam id), so every game gets the same treatment. If a game
+  needs something different, it belongs in Amethyst's handler for it, not here.
 - Licence: GPL-3.0-or-later (the bridge imports Amethyst's GPL code).
 
 ## Readable code

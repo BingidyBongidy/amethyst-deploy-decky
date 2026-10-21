@@ -50,7 +50,7 @@ function PluginRowContent({ plugin }: { plugin: PluginRow }) {
   );
 }
 
-/** The plugin load order (Bethesda games): A toggles, X moves, LOOT sorts. */
+/** The plugin load order (games with plugin files): A toggles, X moves, LOOT sorts. */
 export function LoadOrderTab({ game, profile, loot, locked, reload }: TabContext & { loot: boolean }) {
   const { rows, error, saving, save } = useRows<PluginRow>(
     () => bridge<PluginRow[]>("plugins", { game, profile }), [game, profile, reload]);
