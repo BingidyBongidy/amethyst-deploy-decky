@@ -1,7 +1,7 @@
 import { DialogButton, Focusable, Navigation } from "@decky/ui";
-import { ReactNode, useEffect, useRef, useState } from "react";
+import { ReactNode, RefObject, useEffect, useRef, useState } from "react";
 import { FaDownload, FaStar, FaThumbsUp } from "react-icons/fa";
-import { Loading, LongText, Note, formatSize, scrollOnFocus, swallowB } from "../ui";
+import { Loading, LongText, Note, RetryNote, formatSize, scrollOnFocus, swallowB } from "../ui";
 import { NexusCard, NexusFile, NexusMod, Task, TsCard, bridge, errText, startInstall, toast } from "../shared";
 import { Item, compact, day, hideBroken } from "./common";
 
@@ -18,132 +18,135 @@ type Props = {
   onBack: () => void;
 };
 
+type BackRef = RefObject<HTMLDivElement | null>;
+
 /** Mod details inside the tab. B (or the Back button) returns to the results. */
-export function Details(p: Props) {
+export function Details(props: Props) {
   const backRef = useRef<HTMLDivElement>(null);
-  useEffect(() => { backRef.current?.focus(); }, []);
+  useEffect(() => {
+    backRef.current?.focus();
+  }, []);
 
   return (
-    <Focusable flow-children="vertical" onCancelButton={swallowB(p.onBack)} onCancelActionDescription="Back to results"
-      style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-      {p.item.src === "nexus"
-        ? <NexusDetails {...p} card={p.item.card} backRef={backRef} />
-        : <TsDetails {...p} card={p.item.card} backRef={backRef} />}
+    <Focusable flow-children="vertical" onCancelButton={swallowB(props.onBack)} onCancelActionDescription="Back to results"
+      className="amd-stack amd-gap-4">
+      {props.item.src === "nexus"
+        ? <NexusDetails {...props} card={props.item.card} backRef={backRef} />
+        : <TsDetails {...props} card={props.item.card} backRef={backRef} />}
     </Focusable>
   );
 }
 
 function Header({ picture, name, lines, children }: { picture: string; name: string; lines: ReactNode[]; children?: ReactNode }) {
   return (
-    <div style={{ display: "flex", gap: 16, padding: "4px 14px 8px", alignItems: "flex-start" }}>
-      {picture ? (
-        <img src={picture} onError={hideBroken} className="amd-thumb" style={{ width: 256, height: 144 }} />
-      ) : <div className="amd-thumb" style={{ width: 256, height: 144 }} />}
-      <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 4 }}>
-        <div style={{ fontSize: 20, fontWeight: 600 }}>{name}</div>
-        {lines.filter(Boolean).map((l, i) => <div key={i} className="amd-sub">{l}</div>)}
+    <div className="amd-details-header">
+      {picture
+        ? <img src={picture} onError={hideBroken} className="amd-thumb amd-thumb-large" />
+        : <div className="amd-thumb amd-thumb-large" />}
+      <div className="amd-grow amd-stack amd-gap-4">
+        <div className="amd-title-large">{name}</div>
+        {lines.filter(Boolean).map((line, i) => <div key={i} className="amd-sub">{line}</div>)}
         {children}
       </div>
     </div>
   );
 }
 
+const BackButton = ({ backRef, onBack }: { backRef: BackRef; onBack: () => void }) => (
+  <DialogButton ref={backRef} className="amd-button-auto amd-min-120" onClick={onBack}>Back</DialogButton>
+);
+
 /** Description text, lined up with the rows around it. */
-const TextBlock = ({ text }: { text: string }) => <LongText text={text} style={{ padding: "0 6px" }} />;
+const TextBlock = ({ text }: { text: string }) => <LongText text={text} className="amd-text-block" />;
 
 const Heading = ({ children }: { children: ReactNode }) => <div className="amd-row amd-sep">{children}</div>;
 
-function NexusDetails(p: Props & { card: NexusCard; backRef: React.RefObject<HTMLDivElement | null> }) {
+/** "by Author · version 1.2 · Category" */
+const nexusByline = (card: NexusCard) =>
+  `by ${card.author}${card.version ? ` · version ${card.version}` : ""}${card.category ? ` · ${card.category}` : ""}`;
+
+/** The full mod (files, description) for a Nexus card; `retry` asks again after an error. */
+function useNexusMod(game: string, modId: number) {
   const [mod, setMod] = useState<NexusMod | null>(null);
   const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
   const [round, setRound] = useState(0);
 
   useEffect(() => {
     let live = true;
     setMod(null);
     setError("");
-    bridge<NexusMod>("nexus_mod", { game: p.game, mod_id: p.card.id }).then(
-      (m) => live && setMod(m), (e) => live && setError(errText(e)));
-    return () => { live = false; };
-  }, [p.card.id, round]);
+    bridge<NexusMod>("nexus_mod", { game, mod_id: modId }).then(
+      (loaded) => live && setMod(loaded), (e) => live && setError(errText(e)));
+    return () => {
+      live = false;
+    };
+  }, [game, modId, round]);
 
-  const card: NexusCard = mod ?? p.card;
-  const premium = p.premium || !!mod?.premium;
-  const canInstall = !p.locked && !busy;
+  return { mod, error, retry: () => setRound((n) => n + 1) };
+}
 
-  const install = async (f: NexusFile) => {
+/**
+ * Nexus only lets free accounts download from its own page: open it in
+ * Steam's browser; the bridge installs the file when it lands in Downloads.
+ */
+async function installFromNexusPage(params: Record<string, unknown>, name: string) {
+  try {
+    const reply = await bridge<{ task: Task; url: string }>("nexus_manual_install", params);
+    if (reply.url) {
+      Navigation.NavigateToExternalWeb(reply.url);
+      toast(`Press Slow download for ${name}. It installs when the download finishes.`);
+    } else {
+      toast(`Installing ${name} (already in Downloads)`);
+    }
+  } catch (e) {
+    toast(errText(e));
+  }
+}
+
+/** What A does on a file: install it (Premium) or open its download page (free). */
+function fileActionLabel(canInstall: boolean, premium: boolean): string | undefined {
+  if (!canInstall) return undefined;
+  return premium ? "Install" : "Open download page";
+}
+
+function NexusDetails(props: Props & { card: NexusCard; backRef: BackRef }) {
+  const { mod, error, retry } = useNexusMod(props.game, props.card.id);
+  const [busy, setBusy] = useState(false);
+
+  const card: NexusCard = mod ?? props.card;
+  const premium = props.premium || !!mod?.premium;
+  const canInstall = !props.locked && !busy;
+
+  const install = async (file: NexusFile) => {
     if (!canInstall) return;
     setBusy(true);
-    const params = { game: p.game, profile: p.profile, mod_id: card.id, file_id: f.id, title: card.name };
+    const params = { game: props.game, profile: props.profile, mod_id: card.id, file_id: file.id, title: card.name };
     if (premium) {
       await startInstall("nexus_install", params, card.name);
     } else {
-      // Nexus only lets free accounts download from its own page: open it in
-      // Steam's browser; the bridge installs the file when it lands in Downloads.
-      try {
-        const r = await bridge<{ task: Task; url: string }>("nexus_manual_install", params);
-        if (r.url) {
-          Navigation.NavigateToExternalWeb(r.url);
-          toast(`Press Slow download for ${card.name}. It installs when the download finishes.`);
-        } else {
-          toast(`Installing ${card.name} (already in Downloads)`);
-        }
-      } catch (e) {
-        toast(errText(e));
-      }
+      await installFromNexusPage(params, card.name);
     }
     setBusy(false);
   };
 
   return (
     <>
-      <Focusable flow-children="horizontal" className="amd-bar" style={{ paddingLeft: 14 }}>
-        <DialogButton ref={p.backRef} style={{ width: "auto", minWidth: 120 }} onClick={p.onBack}
->Back</DialogButton>
+      <Focusable flow-children="horizontal" className="amd-bar amd-indent">
+        <BackButton backRef={props.backRef} onBack={props.onBack} />
       </Focusable>
       <Header picture={card.picture} name={card.name} lines={[
-        `by ${card.author}${card.version ? ` · version ${card.version}` : ""}${card.category ? ` · ${card.category}` : ""}`,
+        nexusByline(card),
         <><FaDownload /> {compact(card.downloads)}   <FaThumbsUp /> {compact(card.endorsements)}
           {card.updated ? `   · updated ${day(card.updated)}` : ""}</>,
       ]}>
-        {card.summary && <div style={{ fontSize: 14, paddingTop: 4 }}>{card.summary}</div>}
+        {card.summary && <div className="amd-summary">{card.summary}</div>}
       </Header>
 
       <Heading>Files</Heading>
-      {!premium && <div className="amd-sub" style={{ padding: "4px 14px 8px" }}>{FREE_NOTE}</div>}
-      {p.locked && <div className="amd-warn" style={{ padding: "4px 14px 8px" }}>A deploy is running. Install when it finishes.</div>}
-      {error ? (
-        <Focusable flow-children="vertical">
-          <Note>{error}</Note>
-          <DialogButton style={{ width: "auto", alignSelf: "flex-start", marginLeft: 14 }}
-            onClick={() => setRound((r) => r + 1)}>Retry</DialogButton>
-        </Focusable>
-      ) : !mod ? <Loading text="Loading files from Nexus Mods…" /> : !mod.files.length ? (
-        <Note>This mod has no files to download.</Note>
-      ) : (
-        <Focusable flow-children="vertical" style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-          {mod.files.map((f) => (
-            <Focusable key={f.id} className="amd-card" focusClassName="amd-focus" onFocus={scrollOnFocus}
-              style={{ alignItems: "flex-start", opacity: canInstall ? 1 : 0.75 }}
-              onActivate={() => install(f)}
-              onOKActionDescription={canInstall ? (premium ? "Install" : "Open download page") : undefined}>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ display: "flex", gap: 8, alignItems: "baseline" }}>
-                  <span className="amd-name" style={{ fontSize: 15 }}>{f.name || f.file_name}</span>
-                  {f.primary && <span className="amd-tag">MAIN DOWNLOAD</span>}
-                </div>
-                <div className="amd-sub">
-                  {[f.version && `version ${f.version}`, f.category, formatSize(f.size)].filter(Boolean).join(" · ")}
-                </div>
-                {f.description && (
-                  <div className="amd-sub" style={{ whiteSpace: "pre-wrap", paddingTop: 2 }}>{f.description}</div>
-                )}
-              </div>
-            </Focusable>
-          ))}
-        </Focusable>
-      )}
+      {!premium && <div className="amd-sub amd-inset">{FREE_NOTE}</div>}
+      {props.locked && <div className="amd-warn amd-inset">A deploy is running. Install when it finishes.</div>}
+      <NexusFiles mod={mod} error={error} onRetry={retry}
+        installLabel={fileActionLabel(canInstall, premium)} onInstall={install} />
 
       {mod?.description && (
         <>
@@ -155,41 +158,71 @@ function NexusDetails(p: Props & { card: NexusCard; backRef: React.RefObject<HTM
   );
 }
 
-function TsDetails(p: Props & { card: TsCard; backRef: React.RefObject<HTMLDivElement | null> }) {
+function NexusFiles({ mod, error, onRetry, installLabel, onInstall }: {
+  mod: NexusMod | null; error: string; onRetry: () => void;
+  /** The A hint; undefined while installing isn't possible. */
+  installLabel: string | undefined;
+  onInstall: (file: NexusFile) => void;
+}) {
+  if (error) return <RetryNote error={error} onRetry={onRetry} />;
+  if (!mod) return <Loading text="Loading files from Nexus Mods…" />;
+  if (!mod.files.length) return <Note>This mod has no files to download.</Note>;
+  return (
+    <Focusable flow-children="vertical" className="amd-list">
+      {mod.files.map((file) => (
+        <Focusable key={file.id} className={`amd-card amd-align-start${installLabel ? "" : " amd-unavailable"}`}
+          focusClassName="amd-focus" onFocus={scrollOnFocus}
+          onActivate={() => onInstall(file)}
+          onOKActionDescription={installLabel}>
+          <div className="amd-grow">
+            <div className="amd-title-row">
+              <span className="amd-name amd-card-title">{file.name || file.file_name}</span>
+              {file.primary && <span className="amd-tag">MAIN DOWNLOAD</span>}
+            </div>
+            <div className="amd-sub">
+              {[file.version && `version ${file.version}`, file.category, formatSize(file.size)].filter(Boolean).join(" · ")}
+            </div>
+            {file.description && <div className="amd-sub amd-file-description">{file.description}</div>}
+          </div>
+        </Focusable>
+      ))}
+    </Focusable>
+  );
+}
+
+function TsDetails(props: Props & { card: TsCard; backRef: BackRef }) {
   const [busy, setBusy] = useState(false);
-  const c = p.card;
-  const name = c.label || c.name;
+  const card = props.card;
+  const name = card.label || card.name;
   const install = async () => {
-    if (p.locked || busy) return;
+    if (props.locked || busy) return;
     setBusy(true);
-    await startInstall("ts_install", { game: p.game, profile: p.profile, namespace: c.namespace, name: c.name }, name);
+    await startInstall("ts_install", { game: props.game, profile: props.profile, namespace: card.namespace, name: card.name }, name);
     setBusy(false);
   };
   return (
     <>
-      <Focusable flow-children="horizontal" className="amd-bar" style={{ paddingLeft: 14 }}>
-        <DialogButton ref={p.backRef} style={{ width: "auto", minWidth: 120 }} onClick={p.onBack}
->Back</DialogButton>
-        <DialogButton style={{ width: "auto", minWidth: 200 }} disabled={p.locked || busy} onClick={install}>
+      <Focusable flow-children="horizontal" className="amd-bar amd-indent">
+        <BackButton backRef={props.backRef} onBack={props.onBack} />
+        <DialogButton className="amd-button-auto amd-min-200" disabled={props.locked || busy} onClick={install}>
           {busy ? "Starting…" : "Install latest"}
         </DialogButton>
-        {p.locked && <span className="amd-warn">A deploy is running. Install when it finishes.</span>}
+        {props.locked && <span className="amd-warn">A deploy is running. Install when it finishes.</span>}
       </Focusable>
-      <Header picture={c.picture} name={name} lines={[
-        `by ${c.author || c.namespace}`,
-        <><FaDownload /> {compact(c.downloads)}   <FaStar /> {compact(c.rating)}
-          {c.size ? `   · ${formatSize(c.size)}` : ""}{c.updated ? `   · updated ${day(c.updated)}` : ""}</>,
+      <Header picture={card.picture} name={name} lines={[
+        `by ${card.author || card.namespace}`,
+        <><FaDownload /> {compact(card.downloads)}   <FaStar /> {compact(card.rating)}
+          {card.size ? `   · ${formatSize(card.size)}` : ""}{card.updated ? `   · updated ${day(card.updated)}` : ""}</>,
       ]} />
-      {c.summary ? (
+      {card.summary ? (
         <>
           <Heading>Description</Heading>
-          <TextBlock text={c.summary} />
+          <TextBlock text={card.summary} />
         </>
       ) : null}
-      <div className="amd-sub" style={{ padding: "8px 14px" }}>
+      <div className="amd-sub amd-pad">
         Installs the newest version. You'll be asked about any dependencies it needs.
       </div>
     </>
   );
 }
-

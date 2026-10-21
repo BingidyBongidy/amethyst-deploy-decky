@@ -1,5 +1,5 @@
 import { ConfirmModal, DialogButton, Focusable, ModalRoot, showModal, ShowModalResult } from "@decky/ui";
-import { ReactNode, useEffect, useRef, useState } from "react";
+import { ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { Styles, swallowB } from "../ui";
 import { Task, TaskChoice, bridge, errText, toast, useBridgeEvent } from "../shared";
 import { Buttons, CheckList, showText, useToggleSet } from "./common";
@@ -11,10 +11,10 @@ const openPrompts = new Map<string, ShowModalResult>();
 /** Open the prompt for a task waiting on a choice. No-op if one is already open for it. */
 export function openPrompt(task: Task) {
   if (!task.choice || openPrompts.has(task.id)) return;
-  const r = showModal(<TaskPromptModal task={task} />, undefined, {
+  const modal = showModal(<TaskPromptModal task={task} />, undefined, {
     fnOnClose: () => openPrompts.delete(task.id),
   });
-  openPrompts.set(task.id, r);
+  openPrompts.set(task.id, modal);
 }
 
 export type PromptApi = {
@@ -31,25 +31,31 @@ export type PromptApi = {
 function TaskPromptModal({ task, closeModal }: { task: Task; closeModal?: () => void }) {
   const [busy, setBusy] = useState(false);
   const closed = useRef(false);
-  const close = () => {
+  const closeModalRef = useRef(closeModal);
+  closeModalRef.current = closeModal;
+  // Stable for the task, so the check on open below runs once.
+  const close = useCallback(() => {
     if (closed.current) return;
     closed.current = true;
     openPrompts.delete(task.id);
-    closeModal?.();
-  };
+    closeModalRef.current?.();
+  }, [task.id]);
 
   // Close cleanly when the task moves on without us (finished, cancelled
   // elsewhere, answered from another prompt, or the bridge stopped).
   useBridgeEvent((event, data) => {
-    if (event === "bridge_stopped") close();
-    else if (event === "task" && data?.id === task.id && (data as Task).state !== "choice") close();
+    if (event === "bridge_stopped") {
+      close();
+    } else if (event === "task" && data?.id === task.id && (data as Task).state !== "choice") {
+      close();
+    }
   });
   useEffect(() => {
-    bridge<Task[]>("tasks").then((ts) => {
-      const t = ts.find((x) => x.id === task.id);
-      if (!t || t.state !== "choice") close();
+    bridge<Task[]>("tasks").then((tasks) => {
+      const current = tasks.find((t) => t.id === task.id);
+      if (!current || current.state !== "choice") close();
     }, () => {});
-  }, []);
+  }, [task.id, close]);
 
   const run = async (fn: () => Promise<unknown>, closeOnError: boolean) => {
     setBusy(true);
@@ -80,22 +86,25 @@ function TaskPromptModal({ task, closeModal }: { task: Task; closeModal?: () => 
   };
 
   const choice = task.choice as TaskChoice;
-  let body: ReactNode;
-  if (choice.kind === "fomod") body = <FomodWizard api={api} />;
-  else if (choice.kind === "bain") body = <BainPrompt api={api} choice={choice} />;
-  else if (choice.kind === "exists") body = <ExistsPrompt api={api} choice={choice} />;
-  else body = <DepsPrompt api={api} choice={choice} />;
-
   return (
     <ModalRoot closeModal={close} onCancel={api.askCancel} bAllowFullSize={choice.kind === "fomod"}
       bDisableBackgroundDismiss bHideCloseIcon>
       <Styles />
       {/* B anywhere inside asks to cancel the task instead of just closing. */}
       <Focusable onCancelButton={swallowB(api.askCancel)} onCancelActionDescription="Cancel install">
-        {body}
+        <PromptBody api={api} choice={choice} />
       </Focusable>
     </ModalRoot>
   );
+}
+
+function PromptBody({ api, choice }: { api: PromptApi; choice: TaskChoice }): ReactNode {
+  switch (choice.kind) {
+    case "fomod": return <FomodWizard api={api} />;
+    case "bain": return <BainPrompt api={api} choice={choice} />;
+    case "exists": return <ExistsPrompt api={api} choice={choice} />;
+    default: return <DepsPrompt api={api} choice={choice} />;
+  }
 }
 
 // ---------- BAIN ----------
@@ -103,21 +112,21 @@ function TaskPromptModal({ task, closeModal }: { task: Task; closeModal?: () => 
 type Bain = Extract<TaskChoice, { kind: "bain" }>;
 
 function BainPrompt({ api, choice }: { api: PromptApi; choice: Bain }) {
-  const [sel, flip] = useToggleSet(() => choice.packages.filter((p) => p.default).map((p) => p.name));
+  const [selected, flip] = useToggleSet(() => choice.packages.filter((pkg) => pkg.default).map((pkg) => pkg.name));
   return (
-    <div className="amd-modal" style={{ width: "min(760px, calc(100vw - 140px))" }}>
+    <div className="amd-modal amd-modal-medium">
       <h2>Choose packages</h2>
       <div className="amd-sub">{choice.mod} is a BAIN archive. Pick the packages to install; the defaults are checked.</div>
-      <CheckList sel={sel} flip={flip} disabled={api.busy}
-        items={choice.packages.map((p) => ({ key: p.name, label: p.label || p.name, tag: p.default && "default" }))} />
-      <div className="amd-sub">{sel.size} of {choice.packages.length} selected</div>
+      <CheckList selected={selected} flip={flip} disabled={api.busy}
+        items={choice.packages.map((pkg) => ({ key: pkg.name, label: pkg.label || pkg.name, tag: pkg.default && "default" }))} />
+      <div className="amd-sub">{selected.size} of {choice.packages.length} selected</div>
       <Buttons>
         {choice.readme.trim() && (
           <DialogButton onClick={() => showText(`${choice.mod}: readme`, choice.readme)}>Readme</DialogButton>
         )}
         <DialogButton disabled={api.busy} onClick={api.cancel}>Cancel</DialogButton>
-        <DialogButton disabled={api.busy || !sel.size}
-          onClick={() => api.answer(choice.packages.map((p) => p.name).filter((n) => sel.has(n)))}>
+        <DialogButton disabled={api.busy || !selected.size}
+          onClick={() => api.answer(choice.packages.map((pkg) => pkg.name).filter((name) => selected.has(name)))}>
           Install
         </DialogButton>
       </Buttons>
@@ -131,7 +140,7 @@ type Exists = Extract<TaskChoice, { kind: "exists" }>;
 
 function ExistsPrompt({ api, choice }: { api: PromptApi; choice: Exists }) {
   return (
-    <div className="amd-modal" style={{ width: "min(640px, calc(100vw - 140px))" }}>
+    <div className="amd-modal amd-modal-small">
       <h2>{choice.mod} is already installed</h2>
       <div className="amd-sub">
         Replace overwrites the installed copy. Keep both installs this one next to it under a new name.
@@ -150,21 +159,22 @@ function ExistsPrompt({ api, choice }: { api: PromptApi; choice: Exists }) {
 type Deps = Extract<TaskChoice, { kind: "deps" }>;
 
 function DepsPrompt({ api, choice }: { api: PromptApi; choice: Deps }) {
-  const [sel, flip] = useToggleSet(() => choice.packages.map((p) => p.id));
+  const [selected, flip] = useToggleSet(() => choice.packages.map((pkg) => pkg.id));
   return (
-    <div className="amd-modal" style={{ width: "min(760px, calc(100vw - 140px))" }}>
+    <div className="amd-modal amd-modal-medium">
       <h2>{choice.mod} needs these mods</h2>
       <div className="amd-sub">Checked mods are installed too. Uncheck any you already have from elsewhere.</div>
-      <CheckList sel={sel} flip={flip} disabled={api.busy}
-        items={choice.packages.map((p) => ({
-          key: p.id, label: p.label || p.id,
-          tag: [p.version && `v${p.version}`, p.author && `by ${p.author}`].filter(Boolean).join(" · "),
+      <CheckList selected={selected} flip={flip} disabled={api.busy}
+        items={choice.packages.map((pkg) => ({
+          key: pkg.id,
+          label: pkg.label || pkg.id,
+          tag: [pkg.version && `v${pkg.version}`, pkg.author && `by ${pkg.author}`].filter(Boolean).join(" · "),
         }))} />
       <Buttons>
         <DialogButton disabled={api.busy} onClick={api.cancel}>Cancel</DialogButton>
         <DialogButton disabled={api.busy}
-          onClick={() => api.answer(choice.packages.map((p) => p.id).filter((id) => sel.has(id)))}>
-          {sel.size ? "Install" : "Install without them"}
+          onClick={() => api.answer(choice.packages.map((pkg) => pkg.id).filter((id) => selected.has(id)))}>
+          {selected.size ? "Install" : "Install without them"}
         </DialogButton>
       </Buttons>
     </div>

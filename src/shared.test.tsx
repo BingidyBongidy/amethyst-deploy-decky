@@ -1,8 +1,9 @@
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { toaster } from "@decky/api";
-import { bridge, launchId, startInstall } from "./shared";
-import { onBridge } from "./test/deckyApi";
-import { makeGame } from "./test/fixtures";
+import { Task, bridge, launchId, startInstall, useTasks } from "./shared";
+import { emit, onBridge } from "./test/deckyApi";
+import { deferred, makeGame, makeTask } from "./test/fixtures";
 
 const steam = globalThis as any;
 
@@ -56,5 +57,31 @@ describe("startInstall", () => {
     });
     await startInstall("install_archive", { path: "/a.txt" }, "a.txt");
     expect(toaster.toast).toHaveBeenCalledWith(expect.objectContaining({ body: "Not an archive" }));
+  });
+});
+
+describe("useTasks", () => {
+  it("keeps a task event that arrives while the first tasks request is in flight", async () => {
+    const reply = deferred<Task[]>();
+    onBridge("tasks", () => reply.promise);
+    const { result } = renderHook(() => useTasks());
+
+    // The install finishes before the bridge answers the first "tasks" call...
+    await emit("amethyst_event", "task", makeTask({ id: "t1", state: "done" }));
+    expect(result.current.map((t) => t.state)).toEqual(["done"]);
+
+    // ...and the reply, read before that, still says it's working.
+    await act(async () => {
+      reply.resolve([makeTask({ id: "t1", state: "working" }), makeTask({ id: "t2", title: "USSEP" })]);
+    });
+    await waitFor(() => expect(result.current.map((t) => [t.id, t.state])).toEqual([["t1", "done"], ["t2", "working"]]));
+  });
+
+  it("follows task events after the first reply", async () => {
+    onBridge("tasks", () => [makeTask({ id: "t1", state: "working" })]);
+    const { result } = renderHook(() => useTasks());
+    await waitFor(() => expect(result.current).toHaveLength(1));
+    await emit("amethyst_event", "task", makeTask({ id: "t1", state: "error", error: "Bad archive" }));
+    expect(result.current.map((t) => t.state)).toEqual(["error"]);
   });
 });

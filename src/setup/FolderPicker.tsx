@@ -17,65 +17,74 @@ function FolderPicker({ game, onPick, closeModal }: {
   game: string; onPick: (path: string) => void; closeModal?: () => void;
 }) {
   const [path, setPath] = useState("");
-  const [list, setList] = useState<Listing | null>(null);
+  const [listing, setListing] = useState<Listing | null>(null);
   const [error, setError] = useState("");
 
   useEffect(() => {
     let live = true;
-    setList(null);
+    setListing(null);
     setError("");
     bridge<Listing>("browse_folders", { path, game }).then(
-      (l) => live && setList(l), (e) => live && setError(errText(e)));
-    return () => { live = false; };
-  }, [path]);
+      (loaded) => live && setListing(loaded), (e) => live && setError(errText(e)));
+    return () => {
+      live = false;
+    };
+  }, [path, game]);
 
-  const pick = (p: string) => {
+  const pick = (folder: string) => {
     closeModal?.();
-    onPick(p);
+    onPick(folder);
   };
-  const up = () => setPath(list?.parent ?? "");
+  const up = () => setPath(listing?.parent ?? "");
 
   return (
     <ModalRoot closeModal={closeModal} bAllowFullSize>
       <Styles />
-      <div className="amd-modal" style={{ width: "min(900px, calc(100vw - 140px))", height: "min(560px, calc(100vh - 180px))",
-        display: "flex", flexDirection: "column", gap: 8 }}>
-        <div style={{ fontSize: 20, fontWeight: 600 }}>Choose {game}'s folder</div>
-        <div className="amd-sub" style={{ wordBreak: "break-all" }}>
+      <div className="amd-modal amd-modal-large">
+        <div className="amd-title-large">Choose {game}'s folder</div>
+        <div className="amd-sub amd-break-all">
           {path ? path : "Pick where to start looking."}
-          {list?.looks_like_game && <span style={{ color: "#5ba32b" }}> · <FaCheckCircle /> looks like {game}</span>}
+          {listing?.looks_like_game && <span className="amd-ok"> · <FaCheckCircle /> looks like {game}</span>}
         </div>
         <div className="amd-sub">A opens a folder · X uses the highlighted folder · folders marked with a tick hold the game.</div>
-        <Focusable flow-children="vertical" className="amd-scroll"
-          onCancelButton={path ? swallowB(up) : undefined} onCancelActionDescription={path ? "Up a folder" : undefined}
-          style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", gap: 2 }}>
-          {error ? <div className="amd-err">{error}</div> : !list ? <Loading text="Reading folders…" /> : (
-            <>
-              {path && (
-                <Focusable className="amd-row" focusClassName="amd-focus" onFocus={scrollOnFocus}
-                  onActivate={up} onOKActionDescription="Up a folder">
-                  <FaArrowUp /> <span className="amd-name">Up to {list.parent || "start"}</span>
-                </Focusable>
-              )}
-              {list.folders.map((f) => (
-                <Focusable key={f.path} className="amd-row" focusClassName="amd-focus" onFocus={scrollOnFocus}
-                  onActivate={() => setPath(f.path)} onOKActionDescription="Open"
-                  onSecondaryButton={() => pick(f.path)} onSecondaryActionDescription="Use this folder">
-                  <FaFolder style={{ opacity: 0.7 }} />
-                  <span className="amd-name">{f.name}</span>
-                  {f.looks_like_game && <span className="amd-tag" style={{ color: "#5ba32b", opacity: 1 }}><FaCheckCircle /> {game}</span>}
-                </Focusable>
-              ))}
-              {list.folders.length === 0 && <div className="amd-sub" style={{ padding: 8 }}>No folders here.</div>}
-            </>
-          )}
+        <Focusable flow-children="vertical" className="amd-scroll amd-list amd-fill-height"
+          onCancelButton={path ? swallowB(up) : undefined} onCancelActionDescription={path ? "Up a folder" : undefined}>
+          <FolderRows game={game} path={path} listing={listing} error={error} onOpen={setPath} onUp={up} onPick={pick} />
         </Focusable>
-        <Focusable className="amd-btns" flow-children="horizontal" style={{ display: "flex", gap: 10 }}>
+        <Focusable className="amd-btns" flow-children="horizontal">
           <DialogButton disabled={!path} onClick={() => pick(path)}>Use this folder</DialogButton>
           <DialogButton onClick={() => closeModal?.()}>Cancel</DialogButton>
         </Focusable>
       </div>
     </ModalRoot>
+  );
+}
+
+function FolderRows({ game, path, listing, error, onOpen, onUp, onPick }: {
+  game: string; path: string; listing: Listing | null; error: string;
+  onOpen: (path: string) => void; onUp: () => void; onPick: (path: string) => void;
+}) {
+  if (error) return <div className="amd-err">{error}</div>;
+  if (!listing) return <Loading text="Reading folders…" />;
+  return (
+    <>
+      {path && (
+        <Focusable className="amd-row" focusClassName="amd-focus" onFocus={scrollOnFocus}
+          onActivate={onUp} onOKActionDescription="Up a folder">
+          <FaArrowUp /> <span className="amd-name">Up to {listing.parent || "start"}</span>
+        </Focusable>
+      )}
+      {listing.folders.map((folder) => (
+        <Focusable key={folder.path} className="amd-row" focusClassName="amd-focus" onFocus={scrollOnFocus}
+          onActivate={() => onOpen(folder.path)} onOKActionDescription="Open"
+          onSecondaryButton={() => onPick(folder.path)} onSecondaryActionDescription="Use this folder">
+          <FaFolder className="amd-icon" />
+          <span className="amd-name">{folder.name}</span>
+          {folder.looks_like_game && <span className="amd-tag amd-ok"><FaCheckCircle /> {game}</span>}
+        </Focusable>
+      ))}
+      {listing.folders.length === 0 && <div className="amd-sub amd-empty">No folders here.</div>}
+    </>
   );
 }
 

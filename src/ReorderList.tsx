@@ -29,68 +29,82 @@ type Grab<T> = { key: string; from: number; order: T[] };
  * item into whichever row has focus. That avoids moving a focused DOM node,
  * which would drop gamepad focus.
  */
-export function ReorderList<T>(p: Props<T>) {
+export function ReorderList<T>(props: Props<T>) {
   const [grab, setGrab] = useState<Grab<T> | null>(null);
-  useEffect(() => setGrab(null), [p.items]);
+  useEffect(() => setGrab(null), [props.items]);
 
-  const shown = grab ? grab.order : p.items;
+  const shown = grab ? grab.order : props.items;
+  const idle = !grab && !props.disabled;
 
-  const moveTo = (g: Grab<T>, i: number): Grab<T> => {
-    const from = g.order.findIndex((x) => p.keyOf(x) === g.key);
-    if (from < 0 || from === i) return g;
-    const order = [...g.order];
-    const [it] = order.splice(from, 1);
-    order.splice(i, 0, it);
-    return { ...g, order };
+  const moveTo = (current: Grab<T>, index: number): Grab<T> => {
+    const from = current.order.findIndex((x) => props.keyOf(x) === current.key);
+    if (from < 0 || from === index) return current;
+    const order = [...current.order];
+    const [moved] = order.splice(from, 1);
+    order.splice(index, 0, moved);
+    return { ...current, order };
   };
 
-  const drop = (g: Grab<T>, item: T) => {
-    const to = g.order.findIndex((x) => p.keyOf(x) === g.key);
+  const drop = (current: Grab<T>, item: T) => {
+    const to = current.order.findIndex((x) => props.keyOf(x) === current.key);
     setGrab(null);
-    if (to >= 0 && to !== g.from) p.onMove(item, to, g.order);
+    if (to >= 0 && to !== current.from) props.onMove(item, to, current.order);
+  };
+
+  /** A: drop the carried row here, or toggle this one. */
+  const activate = (item: T, grabbed: boolean) => {
+    if (grab) {
+      if (grabbed) drop(grab, item);
+      return;
+    }
+    if (!props.disabled && props.canToggle(item)) props.onToggle(item);
+  };
+
+  /** X: pick the row up. */
+  const pickUp = (item: T, index: number) => {
+    if (grab || props.disabled || !props.canMove(item)) return;
+    setGrab({ key: props.keyOf(item), from: index, order: [...props.items] });
+  };
+
+  /** B while carrying: put it back. */
+  const cancelMove = (e: GamepadEvent) => {
+    e.stopPropagation();
+    e.preventDefault();
+    setGrab(null);
+  };
+
+  const okLabel = (item: T, grabbed: boolean) => {
+    if (grab) return grabbed ? "Drop here" : undefined;
+    return !props.disabled && props.canToggle(item) ? props.toggleLabel(item) : undefined;
   };
 
   return (
-    <Focusable flow-children="vertical" style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+    <Focusable flow-children="vertical" className="amd-list">
       {shown.map((item, i) => {
-        const grabbed = grab?.key === p.keyOf(item);
-        const cls = ["amd-row", p.rowClass?.(item) ?? "", grabbed ? "amd-grabbed" : ""].join(" ");
+        const grabbed = grab?.key === props.keyOf(item);
+        const className = ["amd-row", props.rowClass?.(item) ?? "", grabbed ? "amd-grabbed" : ""].join(" ");
         return (
           <Focusable
             key={i}
-            className={cls}
+            className={className}
             focusClassName="amd-focus"
             onFocus={(e) => {
               scrollOnFocus(e);
-              if (grab && !grabbed) setGrab((g) => (g ? moveTo(g, i) : g));
+              if (grab && !grabbed) setGrab((current) => (current ? moveTo(current, i) : current));
             }}
-            onActivate={() => {
-              if (grab) {
-                if (grabbed) drop(grab, item);
-                return;
-              }
-              if (!p.disabled && p.canToggle(item)) p.onToggle(item);
-            }}
-            onSecondaryButton={() => {
-              if (grab || p.disabled || !p.canMove(item)) return;
-              setGrab({ key: p.keyOf(item), from: i, order: [...p.items] });
-            }}
+            onActivate={() => activate(item, grabbed)}
+            onSecondaryButton={() => pickUp(item, i)}
             // Only claim B while carrying something, so B still goes back otherwise.
-            onCancelButton={grab ? (e: GamepadEvent) => {
-              e.stopPropagation();
-              e.preventDefault();
-              setGrab(null);
-            } : undefined}
-            onOKActionDescription={grab ? (grabbed ? "Drop here" : undefined)
-              : !p.disabled && p.canToggle(item) ? p.toggleLabel(item) : undefined}
-            onSecondaryActionDescription={!grab && !p.disabled && p.canMove(item) ? "Move" : undefined}
+            onCancelButton={grab ? cancelMove : undefined}
+            onOKActionDescription={okLabel(item, grabbed)}
+            onSecondaryActionDescription={idle && props.canMove(item) ? "Move" : undefined}
             onOptionsButton={() => {
-              if (!grab && !p.disabled && p.optionLabel?.(item)) p.onOption?.(item);
+              if (idle && props.optionLabel?.(item)) props.onOption?.(item);
             }}
-            onOptionsActionDescription={!grab && !p.disabled ? p.optionLabel?.(item) || undefined : undefined}
+            onOptionsActionDescription={idle ? props.optionLabel?.(item) || undefined : undefined}
             onCancelActionDescription={grab ? "Cancel move" : undefined}
           >
-            {p.renderRow(item, { grabbed })}
+            {props.renderRow(item, { grabbed })}
           </Focusable>
         );
       })}

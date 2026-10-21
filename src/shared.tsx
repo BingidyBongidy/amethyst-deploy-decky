@@ -48,7 +48,7 @@ export type Task = {
   result: { installed: string[] } | null;
   error: string;
 };
-export const taskFinished = (t: Task) => t.state === "done" || t.state === "error" || t.state === "cancelled";
+export const taskFinished = (task: Task) => task.state === "done" || task.state === "error" || task.state === "cancelled";
 
 export type FomodOption = {
   name: string; description: string; image: boolean; selected: boolean;
@@ -109,9 +109,9 @@ const callBridge = callable<[method: string, params: Record<string, unknown>],
 
 /** Call a method on Amethyst's bridge (main.py BRIDGE_METHODS). Throws the user-facing error. */
 export async function bridge<T>(method: string, params: Record<string, unknown> = {}): Promise<T> {
-  const r = await callBridge(method, params);
-  if (!r.ok) throw new Error(r.error ?? `${method} failed`);
-  return r.result as T;
+  const reply = await callBridge(method, params);
+  if (!reply.ok) throw new Error(reply.error ?? `${method} failed`);
+  return reply.result as T;
 }
 
 export const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -140,29 +140,35 @@ export const takePendingLaunch = () => {
   return id;
 };
 
-const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+/** "Fallout 4: GOTY" -> "fallout4goty", for loose name matching. */
+const normalizeName = (name: string) => name.toLowerCase().replace(/[^a-z0-9]/g, "");
 
 /**
  * What to pass to RunGame for a game: its non-Steam shortcut (Unifideck and
  * friends) when it has one, else Amethyst's Steam app ID, else a name match
  * in the library. Shortcuts launch by game ID, not app ID.
  */
-export function launchId(g: Game): string | null {
-  if (g.shortcut_appid) return ((BigInt(g.shortcut_appid) << 32n) | 0x02000000n).toString();
-  if (g.steam_id) return g.steam_id;
+export function launchId(game: Game): string | null {
+  if (game.shortcut_appid) return ((BigInt(game.shortcut_appid) << 32n) | 0x02000000n).toString();
+  if (game.steam_id) return game.steam_id;
   try {
-    const apps: any[] = collectionStore?.allAppsCollection?.allApps ?? [];
-    const target = norm(g.name);
-    const exact = apps.find((a) => norm(a.display_name ?? "") === target);
-    if (exact) return String(exact.appid);
-    const loose = apps.find((a) => {
-      const n = norm(a.display_name ?? "");
-      return n.length > 3 && (n.includes(target) || target.includes(n));
-    });
-    return loose ? String(loose.appid) : null;
+    return libraryAppIdByName(game.name);
   } catch {
     return null;
   }
+}
+
+/** The Steam library app whose name matches: exactly if possible, else one containing the other. */
+function libraryAppIdByName(name: string): string | null {
+  const apps: any[] = collectionStore?.allAppsCollection?.allApps ?? [];
+  const target = normalizeName(name);
+  const exact = apps.find((app) => normalizeName(app.display_name ?? "") === target);
+  if (exact) return String(exact.appid);
+  const loose = apps.find((app) => {
+    const appName = normalizeName(app.display_name ?? "");
+    return appName.length > 3 && (appName.includes(target) || target.includes(appName));
+  });
+  return loose ? String(loose.appid) : null;
 }
 
 export function runApp(appId: string) {
@@ -174,38 +180,43 @@ export function runApp(appId: string) {
 }
 
 /** Start deploy/restore; launch the game afterwards if launchAppId is set. Returns an error or null. */
-export async function startGameJob(action: "deploy" | "restore", g: Game, profile: string,
+export async function startGameJob(action: "deploy" | "restore", game: Game, profile: string,
                                    launchAppId: string | null = null): Promise<string | null> {
   pendingLaunch = launchAppId;
-  const r = await startJob(action, g.game_id || g.name, profile);
-  if (!r.ok) {
+  const reply = await startJob(action, game.game_id || game.name, profile);
+  if (!reply.ok) {
     pendingLaunch = null;
-    return r.error ?? "failed";
+    return reply.error ?? "failed";
   }
   return null;
 }
 
+/** Flatpak redraws its progress line; a redraw replaces the last line instead of adding one. */
+function appendLogLine(log: string[], line: string): string[] {
+  const last = log[log.length - 1];
+  const withoutNumbers = (text: string) => text.replace(/[\d.%\s/]+/g, "").slice(0, 30);
+  const isRedraw = last && line.includes("%") && withoutNumbers(last) === withoutNumbers(line);
+  const next = isRedraw ? [...log.slice(0, -1), line] : [...log, line];
+  return next.slice(-20);
+}
+
 /** Live job state from the backend's amethyst_log / amethyst_done events. */
-export function useJob(onDone?: (s: JobStatus) => void) {
+export function useJob(onDone?: (status: JobStatus) => void) {
   const [job, setJob] = useState<JobStatus>({ log: [] });
+  // Listeners are added once; the ref lets them call the latest onDone.
+  const onDoneRef = useRef(onDone);
+  onDoneRef.current = onDone;
   useEffect(() => {
     jobStatus().then(setJob);
     const onLog = addEventListener<[string]>("amethyst_log", (line) =>
-      setJob((j) => {
-        const last = j.log[j.log.length - 1];
-        // collapse flatpak progress redraws into one line
-        const strip = (s: string) => s.replace(/[\d.%\s/]+/g, "").slice(0, 30);
-        const log = last && line.includes("%") && strip(last) === strip(line)
-          ? [...j.log.slice(0, -1), line] : [...j.log, line];
-        return { ...j, running: true, log: log.slice(-20) };
-      }));
-    const done = addEventListener<[JobStatus]>("amethyst_done", (s) => {
-      setJob((j) => ({ ...j, ...s, log: j.log }));
-      onDone?.(s);
+      setJob((current) => ({ ...current, running: true, log: appendLogLine(current.log, line) })));
+    const onFinished = addEventListener<[JobStatus]>("amethyst_done", (status) => {
+      setJob((current) => ({ ...current, ...status, log: current.log }));
+      onDoneRef.current?.(status);
     });
     return () => {
       removeEventListener("amethyst_log", onLog);
-      removeEventListener("amethyst_done", done);
+      removeEventListener("amethyst_done", onFinished);
     };
   }, []);
   return [job, setJob] as const;
@@ -216,26 +227,45 @@ export function useBridgeEvent(handler: (event: string, data: any) => void) {
   const ref = useRef(handler);
   ref.current = handler;
   useEffect(() => {
-    const l = addEventListener<[string, any]>("amethyst_event", (e, d) => ref.current(e, d));
-    return () => { removeEventListener("amethyst_event", l); };
+    const listener = addEventListener<[string, any]>("amethyst_event", (event, data) => ref.current(event, data));
+    return () => {
+      removeEventListener("amethyst_event", listener);
+    };
   }, []);
 }
+
+/** Update a task in place, or append a new id, so rows keep their order. */
+function upsertTask(tasks: Task[], task: Task): Task[] {
+  if (!tasks.some((t) => t.id === task.id)) return [...tasks, task];
+  return tasks.map((t) => (t.id === task.id ? task : t));
+}
+
+/**
+ * Merge the first "tasks" reply into the list. Everything already in `current`
+ * came from a "task" event that arrived while the request was in flight, so it's
+ * newer than the reply: events win for their ids, the reply fills in the rest.
+ */
+export function mergeTaskReply(reply: Task[], current: Task[]): Task[] {
+  const fromEvents = new Map(current.map((t) => [t.id, t]));
+  const merged = reply.map((t) => fromEvents.get(t.id) ?? t);
+  const replyIds = new Set(reply.map((t) => t.id));
+  return [...merged, ...current.filter((t) => !replyIds.has(t.id))];
+}
+
+const helperStopped = (task: Task): Task =>
+  (taskFinished(task) ? task : { ...task, state: "error", error: "Amethyst's helper stopped." });
 
 /** Live list of bridge tasks: loads once, then follows "task" events. */
 export function useTasks() {
   const [tasks, setTasks] = useState<Task[]>([]);
   useEffect(() => {
-    bridge<Task[]>("tasks").then(setTasks, () => {});
+    bridge<Task[]>("tasks").then((reply) => setTasks((current) => mergeTaskReply(reply, current)), () => {});
   }, []);
   useBridgeEvent((event, data) => {
     if (event === "task") {
-      // Update in place, append new ids: rows keep their order.
-      setTasks((ts) => ts.some((t) => t.id === data.id)
-        ? ts.map((t) => (t.id === data.id ? data as Task : t))
-        : [...ts, data as Task]);
+      setTasks((current) => upsertTask(current, data as Task));
     } else if (event === "bridge_stopped") {
-      setTasks((ts) => ts.map((t) => taskFinished(t) ? t
-        : { ...t, state: "error", error: "Amethyst's helper stopped." }));
+      setTasks((current) => current.map(helperStopped));
     }
   });
   return tasks;
