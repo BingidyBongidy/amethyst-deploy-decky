@@ -10,11 +10,12 @@ state, next steps and how to test.
 - `defaults/amethyst_bridge.py`: JSON-RPC helper that runs *inside* Amethyst's
   Flatpak Python and imports Amethyst's modules. `defaults/*` ship at the plugin root.
 - `defaults/amethyst_snapshot.py`: one-shot game/profile listing for the QAM panel.
-- `src/index.tsx`: frontend (React, `@decky/ui`, `@decky/api`): QAM panel and route registration.
-- `src/AmethystPage.tsx`: full-screen `/amethyst` page (Mods, Plugins, Setup tabs).
-- `src/ReorderList.tsx`: controller list with toggle and pick-up/carry/drop reordering.
-- `src/shared.tsx`: types, bridge client, job events and launch helpers used by both.
-- `tests/`: bridge smoke test against real Amethyst source plus a fake Steam home.
+- `defaults/amethyst_*.py`: the bridge's other modules (tasks, Nexus/Thunderstore,
+  Unifideck, game-folder resolver). See `docs/ARCHITECTURE.md` for the full map.
+- `src/`: frontend (React, `@decky/ui`, `@decky/api`). `index.tsx` is the QAM panel and
+  route; `AmethystPage.tsx` the full-screen page; `shared.tsx` the RPC types and hooks.
+- `tests/`: bridge smoke tests against real Amethyst source plus a fake Steam home;
+  `src/**/*.test.tsx` are the frontend tests.
 
 ## Rules
 - Never modify or vendor Amethyst. Call its CLI, or import its modules from the bridge.
@@ -31,6 +32,25 @@ state, next steps and how to test.
   trackpad: logging in to Nexus (sign in once, press Authorize), and free accounts
   pressing "Slow download", one click per file.
 - Licence: GPL-3.0-or-later (the bridge imports Amethyst's GPL code).
+
+## Readable code
+Code here gets reviewed by people, so optimise for reading, not writing.
+- One responsibility per module and class. If you can't give it a short, accurate
+  name, split it.
+- Files aim for under 400 lines; anything over 500 needs splitting or a stated reason.
+  Functions fit on a screen (about 50 lines) and do one thing. No flag arguments that
+  switch a function between two behaviours: make two functions.
+- One statement per line. Prefer a named helper or an early return over a nested
+  ternary, a long chained expression or a multi-line lambda.
+- Names say what something is; comments say why (the GUI function mirrored, the
+  device quirk, the trade-off). Don't comment what the code already says.
+- Frontend: styles live in `src/ui.tsx` classes, not long inline `style={{...}}`
+  objects; components over ~150 lines get split.
+- Checks: `ruff check` (Python) and `pnpm lint` (TypeScript) enforce the size and
+  complexity limits. Run them with the tests; fix what they flag rather than
+  disabling the rule.
+- Every review, including your own before you finish, also looks at the size and
+  responsibilities of the files touched, not just the diff.
 
 ## Debugging on the device
 You can't reach the device. Ship a zip and ask Brad for these when something fails:

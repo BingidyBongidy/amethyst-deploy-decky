@@ -57,7 +57,7 @@ async def _run(args, stdin_data: bytes | None = None, timeout: float = 120):
     except asyncio.TimeoutError:
         proc.kill()
         await proc.wait()
-        raise RuntimeError(f"timed out after {int(timeout)}s: {' '.join(args[:4])}")
+        raise RuntimeError(f"timed out after {int(timeout)}s: {' '.join(args[:4])}") from None
     return proc.returncode, out.decode(errors="replace"), err.decode(errors="replace")
 
 
@@ -68,7 +68,8 @@ import json  # noqa: E402
 # Installs and downloads run as bridge tasks and answer at once.
 BRIDGE_METHODS = {
     "list_games": 120, "detect_installed": 120, "configure_game": 120,
-    "create_profile": 30, "mods": 120, "set_mod_enabled": 120, "move_mod": 60, "remove_mod": 300, "game_folder_check": 30, "browse_folders": 30,
+    "create_profile": 30, "game_folder_check": 30, "browse_folders": 30,
+    "mods": 120, "set_mod_enabled": 120, "move_mod": 60, "remove_mod": 300,
     "plugins": 180, "set_plugin_enabled": 180, "move_plugin": 180,
     "loot_sort": 600, "recent_log": 10,
     "tasks": 10, "task_answer": 10, "task_cancel": 10,
@@ -204,17 +205,24 @@ class Plugin:
 
     # ---------- full controller UI (bridge) ----------
 
-    async def call(self, method: str, params: dict | None = None) -> dict:
-        """Frontend entry point: {ok, result} or {ok: False, error}."""
+    async def _refuse_call(self, method: str) -> "str | None":
+        """Why a bridge call can't run now, or None."""
         if method not in BRIDGE_METHODS:
-            return {"ok": False, "error": f"Unknown action {method}"}
+            return f"Unknown action {method}"
         if self.job and not self.job.done():
-            return {"ok": False, "error": "Wait for the current deploy/install to finish."}
+            return "Wait for the current deploy/install to finish."
         if self.bridge is None:
             self.bridge = BridgeClient()
         # A running helper proves the Flatpak is there; only check before starting it.
         if not self.bridge.alive() and not await self._flatpak_installed():
-            return {"ok": False, "error": "The full UI needs Amethyst's Flatpak. Install it from the plugin menu."}
+            return "The full UI needs Amethyst's Flatpak. Install it from the plugin menu."
+        return None
+
+    async def call(self, method: str, params: dict | None = None) -> dict:
+        """Frontend entry point: {ok, result} or {ok: False, error}."""
+        refusal = await self._refuse_call(method)
+        if refusal:
+            return {"ok": False, "error": refusal}
         try:
             resp = await self.bridge.call(method, params or {}, BRIDGE_METHODS[method])
         except asyncio.TimeoutError:
@@ -299,7 +307,8 @@ class Plugin:
     async def _snapshot_cli(self, cli: list) -> list:
         rc, out, err = await _run([*cli, "list-games"], timeout=180)
         if rc != 0:
-            raise RuntimeError((err or out).strip().splitlines()[-1] if (err or out).strip() else f"list-games exit {rc}")
+            output = (err or out).strip()
+            raise RuntimeError(output.splitlines()[-1] if output else f"list-games exit {rc}")
         games = parse_list_games(out)
         for g in games:
             if not g["configured"]:
@@ -307,8 +316,8 @@ class Plugin:
             key = g["game_id"] or g["name"]
             prc, pout, _ = await _run([*cli, "list-profiles", key], timeout=120)
             if prc == 0:
-                g["profiles"] = [l.strip() for l in pout.splitlines()
-                                 if l.strip() and not l.startswith(("No profiles", "["))]
+                g["profiles"] = [line.strip() for line in pout.splitlines()
+                                 if line.strip() and not line.startswith(("No profiles", "["))]
         return games
 
     async def start_job(self, action: str, game: str = "", profile: str = "") -> dict:
@@ -385,8 +394,9 @@ class Plugin:
 
     async def _log(self, line: str):
         # progress bars spam near-identical lines; replace rather than append
-        strip = lambda s: re.sub(r"[\d.%\s/]+", "", s)[:30]
-        if self.job_log and "%" in line and strip(line) == strip(self.job_log[-1]):
+        def shape(s: str) -> str:
+            return re.sub(r"[\d.%\s/]+", "", s)[:30]
+        if self.job_log and "%" in line and shape(line) == shape(self.job_log[-1]):
             self.job_log[-1] = line
         else:
             self.job_log.append(line)

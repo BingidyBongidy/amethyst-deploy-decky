@@ -102,7 +102,7 @@ class Nexus:
         try:
             user = api.validate(bypass_cache=True)
         except Exception as e:
-            raise TaskError(f"Nexus didn't accept that key: {e}")
+            raise TaskError(f"Nexus didn't accept that key: {e}") from e
         save_api_key(key)
         self._api, self._user, self._checked = api, user, time.time()
         info = self._info(user)
@@ -375,7 +375,7 @@ class Thunderstore:
             label = f"Downloading {pkg.name} ({i}/{len(wanted)})"
             task.set_step(label, [0, int(pkg.file_size or 0)])
             r = download_package(sub, dest_dir=dest, expected_size=pkg.file_size,
-                                 progress_cb=lambda d, t: task.set_progress(d, t, label),
+                                 progress_cb=lambda d, t, step=label: task.set_progress(d, t, step),
                                  cancel=task.cancel)
             task.check()
             if not r.success or not r.file_path:

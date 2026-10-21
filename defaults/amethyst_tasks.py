@@ -134,8 +134,8 @@ class TaskManager:
                 traceback.print_exc()
                 task.state, task.error = "error", f"{type(e).__name__}: {e}"
             if task.state == "error":
-                tail = "\n  ".join(task.log_lines[-15:])
-                self.log(f"task '{task.title}' failed: {task.error}" + (f"\n  {tail}" if tail else ""))
+                lines = [f"task '{task.title}' failed: {task.error}", *task.log_lines[-15:]]
+                self.log("\n  ".join(lines))
             task.choice = None
             task.fomod = None
             task.emit()
@@ -178,7 +178,7 @@ def install_archive_flow(task: Task, g, profile_dir: Path, archive: Path, *,
         prebuilt_meta=meta, cancel=task.cancel)
     task.check()
     if prepared is None:
-        last = next((l for l in reversed(task.log_lines) if l.strip()), "")
+        last = next((line for line in reversed(task.log_lines) if line.strip()), "")
         raise TaskError(f"Couldn't unpack {archive.name}. {last}".strip())
     finishing = False
     try:

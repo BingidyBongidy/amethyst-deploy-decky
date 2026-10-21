@@ -1,0 +1,28 @@
+# Readability checks for the Python side (see CLAUDE.md "Readable code").
+# Run: ruff check main.py defaults tests
+line-length = 100
+target-version = "py311"
+
+[lint]
+select = [
+  "E", "W",   # pycodestyle: incl. E701/E702 one statement per line
+  "F",        # pyflakes: unused imports/variables, undefined names
+  "B",        # bugbear: likely bugs
+  "C90",      # mccabe: function complexity
+  "PLR0911",  # too many returns
+  "PLR0912",  # too many branches
+  "PLR0915",  # too many statements (a function should fit on a screen)
+  "SIM",      # simplifications
+]
+ignore = [
+  "E402",     # the bridge must import Amethyst after redirecting stdout
+  "SIM105",   # try/except/pass is clearer than contextlib.suppress here
+]
+
+[lint.mccabe]
+max-complexity = 12
+
+[lint.pylint]
+max-branches = 12
+max-statements = 50
+max-returns = 6

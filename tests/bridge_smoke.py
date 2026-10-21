@@ -1,91 +1,180 @@
-import json, subprocess, sys, os, struct
-sys.path.insert(0, os.path.dirname(__file__)); import importlib.util
-spec = importlib.util.spec_from_file_location("mk", os.path.join(os.path.dirname(__file__), "mkplugin.py"))
-# Like inside Amethyst's Flatpak: XDG_* point into the sandbox, not the host dirs.
-env = dict(os.environ, HOME="/tmp/bhome", PYTHONPATH=os.environ["AMETHYST_SRC"],
-           FLATPAK_ID="io.github.Amethyst.ModManager",
-           XDG_DATA_HOME="/tmp/bhome/.var/app/io.github.Amethyst.ModManager/data",
-           XDG_CONFIG_HOME="/tmp/bhome/.var/app/io.github.Amethyst.ModManager/config")
-p = subprocess.Popen([sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "defaults", "amethyst_bridge.py")],
-                     cwd=os.environ["AMETHYST_SRC"], env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                     stderr=open("/tmp/bridge_stderr.log", "w"), text=True)
-print("hello:", p.stdout.readline().strip())
-n = 0
-def call(m, **kw):
-    global n; n += 1
-    p.stdin.write(json.dumps({"id": n, "method": m, "params": kw}) + "\n"); p.stdin.flush()
-    r = json.loads(p.stdout.readline())
-    while r.get("event"):  # task progress etc. - not for this test
-        r = json.loads(p.stdout.readline())
-    assert r["id"] == n
-    return r.get("result"), r.get("error")
-def plugin(path, masters):
-    def sub(t, d): return t.encode()+struct.pack("<H", len(d))+d
-    body = sub("HEDR", struct.pack("<fiI", 1.71, 0, 0x800))
-    for m in masters: body += sub("MAST", m.encode()+b"\0") + sub("DATA", b"\0"*8)
-    open(path, "wb").write(b"TES4"+struct.pack("<IIIIHH", len(body), 0, 0, 0, 44, 0)+body)
+"""Bridge smoke test: detection and setup from every launcher, the folder picker,
+the mod list, load order, profiles and error handling, against real Amethyst
+source and the fake home from make_fake_home.sh.
 
-G = "Skyrim Special Edition"
-r, e = call("list_games"); sk = next(x for x in r if x["name"] == G); print("skyrim before:", sk["configured"], sk["has_plugins"], sk["loot"])
-det, e = call("detect_installed"); print("detect:", det, e)
-assert {"name": G, "launchers": ["steam"]} in det, det
-assert any(d["name"] == "Fallout New Vegas" and "heroic" in d["launchers"] for d in det), det
-r, e = call("configure_game", game="Fallout New Vegas"); print("configure FNV:", r, e)
-assert not e and r["source"] == "heroic" and r["prefix"].endswith("Prefixes/1454587428/pfx"), (r, e)
-assert not r["needs_first_launch"], r
-r, e = call("list_games"); nv = next(x for x in r if x["name"] == "Fallout New Vegas"); print("fnv after:", nv["configured"], nv["profiles"])
-assert nv["configured"]
-assert all(d["name"] != "Fallout New Vegas" for d in call("detect_installed")[0])
-f3 = [d for d in det if "unifideck" in d["launchers"]]; print("unifideck:", f3)
-assert any(d["name"] == "Fallout 3" for d in f3), det
-r, e = call("configure_game", game="Fallout 3"); print("configure F3:", r, e)
-assert not e and r["source"] == "unifideck" and r["prefix"].endswith("adeae8bbfc94427db57c7dfecce3f1d4/pfx"), (r, e)
-assert r["path"].endswith("Fallout 3 GOTY English"), r["path"]
-assert call("game_folder_check", game="Fallout 3")[0]["data_exists"]
-# Folder picker: starting places, then a folder whose subfolders look like the game.
-places, e = call("browse_folders"); print("places:", [p["name"] for p in places["folders"]][:4], e)
-assert places["folders"][0]["name"] == "Home"
-fo3_root = "/tmp/bhome/Games/Epic/Fallout3"
-b, e = call("browse_folders", path=fo3_root, game="Fallout 3")
-print("browse:", [(f["name"], f["looks_like_game"]) for f in b["folders"]], b["looks_like_game"], e)
-assert any(f["looks_like_game"] for f in b["folders"]) and not b["looks_like_game"]
-# A folder chosen by hand that isn't the game asks first; force uses it anyway.
-r, e = call("configure_game", game="Fallout 3", path="/tmp/bhome/Downloads"); print("manual wrong:", r, e)
-assert r["needs_confirm"] and not r["configured"], r
-# Picking a huge folder (Home) stops at the search budget instead of crawling it.
-import time as _t; t0 = _t.time()
-r, e = call("configure_game", game="Fallout 3", path="/tmp/bhome"); print("manual home:", r and r.get("needs_confirm"), round(_t.time() - t0, 2), "s", e)
-assert r["needs_confirm"] and _t.time() - t0 < 10, r
-# Choosing the top folder by hand is fine: the resolver finds the language folder below it.
-r, e = call("configure_game", game="Fallout 3", path=fo3_root); print("manual top:", r["path"], e)
-assert r["configured"] and r["path"].endswith("Fallout 3 GOTY English"), r
-f3g = next(x for x in call("list_games")[0] if x["name"] == "Fallout 3")
-assert f3g["configured"] and f3g["shortcut_appid"] == str(-123456789 & 0xFFFFFFFF), f3g
-print("configure:", call("configure_game", game=G))
-r, e = call("list_games"); sk = next(x for x in r if x["name"] == G); print("skyrim after:", sk["configured"], sk["profiles"])
-# install two mods by hand into staging, like Amethyst would
-root = "/tmp/bhome/Games/Amethyst/Profiles/Skyrim Special Edition/mods"
-for mod, esp, masters in [("Cool Mod", "CoolMod.esp", ["Skyrim.esm"]), ("Patch Pack", "CoolPatch.esp", ["Skyrim.esm", "CoolMod.esp"]), ("Textures HD", None, [])]:
-    os.makedirs(f"{root}/{mod}/textures", exist_ok=True)
-    if esp: plugin(f"{root}/{mod}/{esp}", masters)
-print("mods:", call("mods", game=G, profile="default"))
-for m in ["Cool Mod", "Patch Pack", "Textures HD"]:
-    r, e = call("set_mod_enabled", game=G, profile="default", name=m, enabled=True); assert not e, e
-print("mods enabled:", [(x["name"], x["enabled"]) for x in r])
-r, e = call("move_mod", game=G, profile="default", name="Textures HD", to_index=2); print("moved:", [x["name"] for x in r], e)
-r, e = call("plugins", game=G, profile="default"); print("plugins:", [(x["name"], x["enabled"], x["vanilla"], x["missing_masters"]) for x in r], e)
-r, e = call("move_plugin", game=G, profile="default", name="CoolPatch.esp", to_index=0); print("move patch above master ->", e)
-r, e = call("move_plugin", game=G, profile="default", name="CoolMod.esp", to_index=6); print("move master below patch ->", e)
-r, e = call("set_plugin_enabled", game=G, profile="default", name="CoolMod.esp", enabled=False); print("disable CoolMod:", [(x["name"], x["enabled"], x["missing_masters"]) for x in r], e)
-print("vanilla move:", call("move_plugin", game=G, profile="default", name="Skyrim.esm", to_index=3)[1])
-print("disable mod -> plugins:", [ (x["name"]) for x in call("set_mod_enabled", game=G, profile="default", name="Patch Pack", enabled=False)[0] if False] or "", [(x["name"], x["enabled"]) for x in call("plugins", game=G, profile="default")[0]])
-r, e = call("remove_mod", game=G, profile="default", name="Textures HD"); print("uninstall:", [x["name"] for x in r or []], e)
-assert not e and all(x["name"] != "Textures HD" for x in r) and not os.path.exists(f"{root}/Textures HD"), (r, e)
-fc, e = call("game_folder_check", game=G); print("folder check:", fc["data_exists"], fc["data_folder"][:3], e)
-assert fc["data_exists"] and "Skyrim.esm" in fc["data_folder"], fc
-print("new profile:", call("create_profile", game=G, name="Survival"))
-print("dupe profile:", call("create_profile", game=G, name="Survival")[1])
-print("loot:", call("loot_sort", game=G, profile="default")[1])
-print("bad method:", call("_game", name="x")[1], call("nope")[1])
-print("unknown game:", call("mods", game="Nope", profile="default")[1])
-p.stdin.close(); p.wait(); print("exit", p.returncode)
+    tests/make_fake_home.sh
+    AMETHYST_SRC=../amethyst/src python3 tests/bridge_smoke.py
+
+The checks run in order and build on each other (set up, then add mods, ...).
+"""
+from __future__ import annotations
+
+import time
+
+from bridge_client import FAKE_HOME, STAGING, Bridge, run_checks
+from mkplugin import write_plugin
+
+SKYRIM = "Skyrim Special Edition"
+PROFILE = "default"
+FALLOUT3_EPIC_ID = "adeae8bbfc94427db57c7dfecce3f1d4"
+FALLOUT3_ROOT = FAKE_HOME / "Games" / "Epic" / "Fallout3"
+SKYRIM_MODS = STAGING / SKYRIM / "mods"
+
+bridge: Bridge  # set in main()
+
+
+def mod_names(rows) -> list[str]:
+    return [row["name"] for row in rows]
+
+
+def detection_finds_every_launcher():
+    found = {d["name"]: d["launchers"] for d in bridge.call("detect_installed")}
+    assert found[SKYRIM] == ["steam"], found
+    assert "heroic" in found["Fallout New Vegas"], found
+    assert "unifideck" in found["Fallout 3"], found
+
+
+def setup_through_heroic():
+    result = bridge.call("configure_game", game="Fallout New Vegas")
+    assert result["source"] == "heroic", result
+    assert result["prefix"].endswith("Prefixes/1454587428/pfx"), result
+    assert not result["needs_first_launch"], result
+    assert bridge.game("Fallout New Vegas")["configured"]
+    still_listed = mod_names(bridge.call("detect_installed"))
+    assert "Fallout New Vegas" not in still_listed
+
+
+def setup_through_unifideck_picks_the_language_folder():
+    result = bridge.call("configure_game", game="Fallout 3")
+    assert result["source"] == "unifideck", result
+    assert result["prefix"].endswith(f"{FALLOUT3_EPIC_ID}/pfx"), result
+    assert result["path"].endswith("Fallout 3 GOTY English"), result
+    assert bridge.call("game_folder_check", game="Fallout 3")["data_exists"]
+    shortcut = str(-123456789 & 0xFFFFFFFF)   # games.map stores it signed
+    assert bridge.game("Fallout 3")["shortcut_appid"] == shortcut
+
+
+def folder_picker_lists_places_and_marks_game_folders():
+    places = bridge.call("browse_folders")["folders"]
+    assert places[0]["name"] == "Home", places
+    listing = bridge.call("browse_folders", path=str(FALLOUT3_ROOT), game="Fallout 3")
+    assert not listing["looks_like_game"], listing
+    assert any(folder["looks_like_game"] for folder in listing["folders"]), listing
+
+
+def setup_by_hand_checks_the_folder():
+    wrong = bridge.call("configure_game", game="Fallout 3", path=str(FAKE_HOME / "Downloads"))
+    assert wrong["needs_confirm"] and not wrong["configured"], wrong
+
+    started = time.time()
+    too_big = bridge.call("configure_game", game="Fallout 3", path=str(FAKE_HOME))
+    assert too_big["needs_confirm"], too_big
+    assert time.time() - started < 10, "the folder search should stop at its budget"
+
+    top = bridge.call("configure_game", game="Fallout 3", path=str(FALLOUT3_ROOT))
+    assert top["configured"] and top["path"].endswith("Fallout 3 GOTY English"), top
+
+
+def setup_through_steam():
+    result = bridge.call("configure_game", game=SKYRIM)
+    assert result["source"] == "steam", result
+    assert result["prefix"].endswith("compatdata/489830/pfx"), result
+    assert PROFILE in bridge.game(SKYRIM)["profiles"]
+
+
+def mod_list_enables_and_moves_mods():
+    # Install three mods by hand into staging, like Amethyst would.
+    for mod, plugin, masters in [("Cool Mod", "CoolMod.esp", ["Skyrim.esm"]),
+                                 ("Patch Pack", "CoolPatch.esp", ["Skyrim.esm", "CoolMod.esp"]),
+                                 ("Textures HD", None, [])]:
+        (SKYRIM_MODS / mod / "textures").mkdir(parents=True, exist_ok=True)
+        if plugin:
+            write_plugin(SKYRIM_MODS / mod / plugin, masters)
+    assert sorted(mod_names(bridge.call("mods", game=SKYRIM, profile=PROFILE))) == [
+        "Cool Mod", "Patch Pack", "Textures HD"]
+    for mod in ["Cool Mod", "Patch Pack", "Textures HD"]:
+        rows = bridge.call("set_mod_enabled", game=SKYRIM, profile=PROFILE, name=mod, enabled=True)
+    assert all(row["enabled"] for row in rows), rows
+    rows = bridge.call("move_mod", game=SKYRIM, profile=PROFILE, name="Textures HD", to_index=2)
+    assert mod_names(rows)[2] == "Textures HD", rows
+
+
+def load_order_follows_masters():
+    plugins = bridge.call("plugins", game=SKYRIM, profile=PROFILE)
+    vanilla = [p["name"] for p in plugins if p["vanilla"]]
+    assert "Skyrim.esm" in vanilla and {"CoolMod.esp", "CoolPatch.esp"} <= set(mod_names(plugins))
+    assert not any(p["missing_masters"] for p in plugins), plugins
+
+    above_master = bridge.error("move_plugin", game=SKYRIM, profile=PROFILE,
+                                name="CoolPatch.esp", to_index=0)
+    assert "needs" in above_master, above_master
+    below_patch = bridge.error("move_plugin", game=SKYRIM, profile=PROFILE,
+                               name="CoolMod.esp", to_index=6)
+    assert "needs" in below_patch, below_patch
+    vanilla_move = bridge.error("move_plugin", game=SKYRIM, profile=PROFILE,
+                                name="Skyrim.esm", to_index=3)
+    assert "base game" in vanilla_move, vanilla_move
+
+    rows = bridge.call("set_plugin_enabled", game=SKYRIM, profile=PROFILE,
+                       name="CoolMod.esp", enabled=False)
+    assert not next(p for p in rows if p["name"] == "CoolMod.esp")["enabled"]
+
+
+def disabling_a_mod_drops_its_plugins():
+    bridge.call("set_mod_enabled", game=SKYRIM, profile=PROFILE, name="Patch Pack", enabled=False)
+    plugins = mod_names(bridge.call("plugins", game=SKYRIM, profile=PROFILE))
+    assert "CoolPatch.esp" not in plugins, plugins
+
+
+def uninstall_removes_the_mod():
+    rows = bridge.call("remove_mod", game=SKYRIM, profile=PROFILE, name="Textures HD")
+    assert "Textures HD" not in mod_names(rows), rows
+    assert not (SKYRIM_MODS / "Textures HD").exists()
+
+
+def base_game_check_finds_skyrim_esm():
+    check = bridge.call("game_folder_check", game=SKYRIM)
+    assert check["data_exists"] and "Skyrim.esm" in check["data_folder"], check
+
+
+def profiles_are_created_once():
+    assert "Survival" in bridge.call("create_profile", game=SKYRIM, name="Survival")["profiles"]
+    assert "already exists" in bridge.error("create_profile", game=SKYRIM, name="Survival")
+
+
+def loot_sorts_or_says_why_not():
+    # LOOT needs libloot built for this Python; without it the bridge must say so.
+    result, error = bridge.request("loot_sort", game=SKYRIM, profile=PROFILE)
+    assert result or "LOOT" in error, (result, error)
+
+
+def bad_requests_are_refused():
+    assert "Unknown method" in bridge.error("_game", name="x")
+    assert "Unknown method" in bridge.error("nope")
+    assert "Unknown game" in bridge.error("mods", game="Nope", profile=PROFILE)
+
+
+def main():
+    global bridge
+    with Bridge("/tmp/bridge_stderr.log") as bridge:
+        run_checks([
+            detection_finds_every_launcher,
+            setup_through_heroic,
+            setup_through_unifideck_picks_the_language_folder,
+            folder_picker_lists_places_and_marks_game_folders,
+            setup_by_hand_checks_the_folder,
+            setup_through_steam,
+            mod_list_enables_and_moves_mods,
+            load_order_follows_masters,
+            disabling_a_mod_drops_its_plugins,
+            uninstall_removes_the_mod,
+            base_game_check_finds_skyrim_esm,
+            profiles_are_created_once,
+            loot_sorts_or_says_why_not,
+            bad_requests_are_refused,
+        ])
+    print("bridge smoke test passed")
+
+
+if __name__ == "__main__":
+    main()

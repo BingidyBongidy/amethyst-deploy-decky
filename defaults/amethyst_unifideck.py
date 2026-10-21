@@ -84,7 +84,8 @@ def load_rows() -> list[Row]:
 
 def legendary_installed() -> dict:
     try:
-        data = json.loads((_config_home() / "legendary" / "installed.json").read_text(encoding="utf-8"))
+        path = _config_home() / "legendary" / "installed.json"
+        data = json.loads(path.read_text(encoding="utf-8"))
         return data if isinstance(data, dict) else {}
     except (OSError, ValueError):
         return {}
@@ -126,9 +127,11 @@ def find(exe_names: list[str], app_names: list[str], rows: "list[Row] | None" = 
                 if entry.get("install_path"):
                     root = Path(entry["install_path"])
                 # Selective Downloads: the language pack Legendary installed.
-                languages = [c for c in (gameroot.language(str(t)) for t in entry.get("install_tags") or []) if c]
+                tags = entry.get("install_tags") or []
+                languages = [code for code in map(gameroot.language, map(str, tags)) if code]
             if root.is_dir():
-                return gameroot.resolve(root, exe_names + list(markers or []), languages)[0], row, None
+                markers_all = exe_names + list(markers or [])
+                return gameroot.resolve(root, markers_all, languages)[0], row, None
         return None
     for row in rows:
         for exe in exe_names:
