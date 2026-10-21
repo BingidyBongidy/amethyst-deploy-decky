@@ -262,21 +262,27 @@ function Results({ src, game, profile, locked, focusKey, onOpen }: {
  * text, so typing re-renders only this bar. */
 function SearchBox({ query, onSearch, children }: { query: string; onSearch: (q: string) => void; children: ReactNode }) {
   const [text, setText] = useState(query);
+  // The hint sits under the row, not under the field, so the field, sort
+  // dropdown and Clear button line up.
   return (
-    <Focusable className="amd-bar" flow-children="horizontal">
-      <div style={{ flex: 1, minWidth: 200 }}>
-        <TextField
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter") onSearch(text.trim()); }}
-          onBlur={() => onSearch(text.trim())}
-          description={query ? `Showing results for "${query}"` : "Search (A opens the keyboard). Empty shows top mods."}
-        />
+    <>
+      <Focusable className="amd-bar" flow-children="horizontal" style={{ paddingBottom: 2 }}>
+        <div style={{ flex: 1, minWidth: 200 }}>
+          <TextField
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") onSearch(text.trim()); }}
+            onBlur={() => onSearch(text.trim())}
+          />
+        </div>
+        {children}
+        <DialogButton style={{ width: "auto", minWidth: 100 }} disabled={!text && !query}
+          onClick={() => { setText(""); onSearch(""); }}>Clear</DialogButton>
+      </Focusable>
+      <div className="amd-sub" style={{ padding: "0 0 8px 2px" }}>
+        {query ? `Showing results for "${query}"` : "Search (A opens the keyboard). Empty shows top mods."}
       </div>
-      {children}
-      <DialogButton style={{ width: "auto", minWidth: 100 }} disabled={!text && !query}
-        onClick={() => { setText(""); onSearch(""); }}>Clear</DialogButton>
-    </Focusable>
+    </>
   );
 }
 
